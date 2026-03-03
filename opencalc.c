@@ -8,7 +8,7 @@
 #include "lcdspi.h"
 
 // DEBUG: show raw hex of every keyboard event to identify correct key codes.
-#define KBD_DEBUG 0
+#define KBD_DEBUG 1
 
 // ── Line input buffer ─────────────────────────────────────────────────────────
 #define LINE_BUF_MAX 256
@@ -68,10 +68,32 @@ static void input_move_right(void) {
     line_goto(cursor_pos);
 }
 
+// ── CLI ───────────────────────────────────────────────────────────────────────
+#define PROMPT "> "
+
+static void print_prompt(void) {
+    lcd_print_string(PROMPT);
+    lcd_get_xy(&line_start_x, &line_start_y);
+}
+
+static void exec_command(const char *cmd, int len) {
+    // Trim trailing spaces.
+    while (len > 0 && cmd[len - 1] == ' ') len--;
+
+    if (len == 0) return;
+
+    if (len == 4 && strncmp(cmd, "test", 4) == 0) {
+        lcd_print_string("HelloWorld\n");
+    } else {
+        lcd_print_string("?\n");
+    }
+}
+
 static void input_newline(void) {
     line_goto(line_len);
     lcd_putc(0, '\n');
-    lcd_get_xy(&line_start_x, &line_start_y);
+    exec_command(line_buf, line_len);
+    print_prompt();
     line_len   = 0;
     cursor_pos = 0;
 }
@@ -98,7 +120,7 @@ int main() {
     }
 #else
     lcd_print_string("OpenCalc\n");
-    lcd_get_xy(&line_start_x, &line_start_y);
+    print_prompt();
     lcd_cursor_on();
     int cursor_state = 1;
     uint64_t last_blink = time_us_64();
