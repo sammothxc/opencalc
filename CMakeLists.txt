@@ -44,6 +44,7 @@ target_link_libraries(opencalc
     pico_multicore
 	i2ckbd
 	lcdspi
+	m
 	)
 
 pico_set_program_name(opencalc "opencalc")

@@ -1,3 +1,5 @@
+#include <math.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include "pico/stdlib.h"
@@ -87,6 +89,84 @@ static void input_end(void) {
     line_goto(line_len);
 }
 
+// ── Expression evaluator ──────────────────────────────────────────────────────
+// Grammar (low to high precedence):
+//   expr    = term   (('+' | '-') term)*
+//   term    = power  (('*' | '/') power)*
+//   power   = unary  ('^' unary)*          right-associative
+//   unary   = ('-' | '+') unary | primary
+//   primary = NUMBER | '(' expr ')'
+
+typedef struct { const char *p; int err; } Parser;
+
+static void ps_skip(Parser *ps) { while (*ps->p == ' ') ps->p++; }
+
+static double parse_expr(Parser *ps);
+
+static double parse_primary(Parser *ps) {
+    ps_skip(ps);
+    if (*ps->p == '(') {
+        ps->p++;
+        double v = parse_expr(ps);
+        ps_skip(ps);
+        if (*ps->p == ')') ps->p++; else ps->err = 1;
+        return v;
+    }
+    char *end;
+    double v = strtod(ps->p, &end);
+    if (end == ps->p) { ps->err = 1; return 0; }
+    ps->p = end;
+    return v;
+}
+
+static double parse_unary(Parser *ps) {
+    ps_skip(ps);
+    if (*ps->p == '-') { ps->p++; return -parse_unary(ps); }
+    if (*ps->p == '+') { ps->p++; return  parse_unary(ps); }
+    return parse_primary(ps);
+}
+
+static double parse_power(Parser *ps) {
+    double b = parse_unary(ps);
+    ps_skip(ps);
+    if (*ps->p == '^') { ps->p++; return pow(b, parse_power(ps)); }
+    return b;
+}
+
+static double parse_term(Parser *ps) {
+    double v = parse_power(ps);
+    for (;;) {
+        ps_skip(ps);
+        if (*ps->p == '*') { ps->p++; v *= parse_power(ps); }
+        else if (*ps->p == '/') {
+            ps->p++;
+            double d = parse_power(ps);
+            if (d == 0.0) { ps->err = 1; return 0; }
+            v /= d;
+        } else break;
+    }
+    return v;
+}
+
+static double parse_expr(Parser *ps) {
+    double v = parse_term(ps);
+    for (;;) {
+        ps_skip(ps);
+        if      (*ps->p == '+') { ps->p++; v += parse_term(ps); }
+        else if (*ps->p == '-') { ps->p++; v -= parse_term(ps); }
+        else break;
+    }
+    return v;
+}
+
+static int eval_expr(const char *s, double *out) {
+    Parser ps = { s, 0 };
+    *out = parse_expr(&ps);
+    ps_skip(&ps);
+    if (ps.err || *ps.p != '\0') return 0;
+    return 1;
+}
+
 // ── CLI ───────────────────────────────────────────────────────────────────────
 #define PROMPT "> "
 
@@ -106,13 +186,22 @@ static void print_right(const char *s) {
 }
 
 static void exec_command(const char *cmd, int len) {
-    // Trim trailing spaces.
     while (len > 0 && cmd[len - 1] == ' ') len--;
-
     if (len == 0) return;
 
-    if (len == 4 && strncmp(cmd, "test", 4) == 0) {
-        print_right("HelloWorld");
+    char buf[LINE_BUF_MAX];
+    memcpy(buf, cmd, len);
+    buf[len] = '\0';
+
+    double result;
+    if (eval_expr(buf, &result)) {
+        char out[32];
+        long long ival = (long long)result;
+        if ((double)ival == result)
+            snprintf(out, sizeof(out), "%lld", ival);
+        else
+            snprintf(out, sizeof(out), "%.10g", result);
+        print_right(out);
     } else {
         print_right("?");
     }
