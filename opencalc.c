@@ -8,7 +8,7 @@
 #include "lcdspi.h"
 
 // DEBUG: show raw hex of every keyboard event to identify correct key codes.
-#define KBD_DEBUG 1
+#define KBD_DEBUG 0
 
 // ── Line input buffer ─────────────────────────────────────────────────────────
 #define LINE_BUF_MAX 256
@@ -66,6 +66,16 @@ static void input_move_right(void) {
     if (cursor_pos >= line_len) return;
     cursor_pos++;
     line_goto(cursor_pos);
+}
+
+static void input_home(void) {
+    cursor_pos = 0;
+    line_goto(0);
+}
+
+static void input_end(void) {
+    cursor_pos = line_len;
+    line_goto(line_len);
 }
 
 // ── CLI ───────────────────────────────────────────────────────────────────────
@@ -138,10 +148,12 @@ int main() {
             reset_usb_boot(0, 0);
         } else if (c == KEY_REBOOT) {
             watchdog_reboot(0, 0, 0);
-        } else if (c == KEY_LEFT || c == KEY_RIGHT) {
+        } else if (c == KEY_LEFT || c == KEY_RIGHT || c == KEY_HOME || c == KEY_END) {
             lcd_cursor_off();
-            if (c == KEY_LEFT) input_move_left();
-            else               input_move_right();
+            if      (c == KEY_LEFT)  input_move_left();
+            else if (c == KEY_RIGHT) input_move_right();
+            else if (c == KEY_HOME)  input_home();
+            else                     input_end();
             lcd_cursor_on();
             cursor_state = 1;
             last_blink = time_us_64();

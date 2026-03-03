@@ -19,6 +19,9 @@
 #define KEY_RIGHT    (-5)
 #define KEY_UP       (-6)
 #define KEY_DOWN     (-7)
+#define KEY_HOME     (-8)
+#define KEY_END      (-9)
+#define KEY_TAB      (-10)
 
 void init_i2c_kbd();
 int read_i2c_kbd();
