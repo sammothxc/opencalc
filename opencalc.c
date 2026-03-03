@@ -216,6 +216,10 @@ static void exec_command(const char *cmd, int len) {
     memcpy(buf, cmd, len);
     buf[len] = '\0';
 
+    if (strcmp(buf, "cls") == 0) {
+        lcd_clear_content();
+        return;
+    }
     if (strcmp(buf, "bat") == 0) {
         print_right("100%");
         return;

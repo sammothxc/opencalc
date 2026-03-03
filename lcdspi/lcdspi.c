@@ -780,6 +780,12 @@ void lcd_set_content_start(int y) {
     if (current_y < content_y_start) current_y = content_y_start;
 }
 
+void lcd_clear_content(void) {
+    draw_rect_spi(0, content_y_start, hres - 1, vres - 1, gui_bcolour);
+    current_x = 0;
+    current_y = content_y_start;
+}
+
 void lcd_set_fg_colour(int colour) {
     gui_fcolour = colour;
 }

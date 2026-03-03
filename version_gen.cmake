@@ -10,4 +10,4 @@ if(NOT GIT_RESULT EQUAL 0 OR "${GIT_COUNT}" STREQUAL "")
     set(GIT_COUNT "0")
 endif()
 file(WRITE "${OUTPUT_FILE}"
-    "#pragma once\n#define APP_VERSION \"0.0.${GIT_COUNT}\"\n")
+    "#pragma once\n#define APP_VERSION \"0.1.${GIT_COUNT}\"\n")

@@ -125,6 +125,7 @@ extern void lcd_set_xy(int x, int y);
 extern void lcd_get_xy(int *x, int *y);
 extern void lcd_get_metrics(int *font_w, int *font_h, int *cols);
 extern void lcd_set_content_start(int y);
+extern void lcd_clear_content(void);
 extern void lcd_set_fg_colour(int colour);
 extern void lcd_set_bg_colour(int colour);
 extern void lcd_fill_rect(int x1, int y1, int x2, int y2, int colour);
