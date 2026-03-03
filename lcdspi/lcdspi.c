@@ -25,6 +25,7 @@ static char s_height;
 static char s_width;
 static int cursor_visible = 0;
 static int content_y_start = 0;
+static int content_y_end = 0;
 int lcd_char_pos = 0;
 unsigned char lcd_buffer[320 * 3] = {0};// 1440 = 480*3, 320*3 = 960
 
@@ -360,14 +361,14 @@ unsigned char scrollbuff[LCD_WIDTH * 3];
 void scroll_lcd_spi(int lines) {
     if (lines == 0) return;
     if (lines >= 0) {
-        for (int i = content_y_start; i < vres - lines; i++) {
+        for (int i = content_y_start; i < content_y_end - lines; i++) {
             read_buffer_spi(0, i + lines, hres - 1, i + lines, scrollbuff);
             draw_buffer_spi(0, i, hres - 1, i, scrollbuff);
         }
-        draw_rect_spi(0, vres - lines, hres - 1, vres - 1, gui_bcolour);
+        draw_rect_spi(0, content_y_end - lines, hres - 1, content_y_end - 1, gui_bcolour);
     } else {
         lines = -lines;
-        for (int i = vres - 1; i >= content_y_start + lines; i--) {
+        for (int i = content_y_end - 1; i >= content_y_start + lines; i--) {
             read_buffer_spi(0, i - lines, hres - 1, i - lines, scrollbuff);
             draw_buffer_spi(0, i, hres - 1, i, scrollbuff);
         }
@@ -403,8 +404,8 @@ void display_put_c(char c) {
         case '\n':
             current_x = 0;
             current_y += gui_font_height;
-            if (current_y + gui_font_height >= vres) {
-                int scroll_amt = current_y + gui_font_height - vres;
+            if (current_y + gui_font_height >= content_y_end) {
+                int scroll_amt = current_y + gui_font_height - content_y_end;
                 scroll_lcd_spi(scroll_amt);
                 current_y -= scroll_amt;
                 if (current_y < content_y_start) current_y = content_y_start;
@@ -758,7 +759,7 @@ void lcd_cursor_move_up(void) {
 
 void lcd_cursor_move_down(void) {
     current_y += gui_font_height;
-    if (current_y + gui_font_height > vres) current_y = vres - gui_font_height;
+    if (current_y + gui_font_height > content_y_end) current_y = content_y_end - gui_font_height;
 }
 
 void lcd_cursor_on(void) {
@@ -780,8 +781,17 @@ void lcd_set_content_start(int y) {
     if (current_y < content_y_start) current_y = content_y_start;
 }
 
+void lcd_set_content_end(int y) {
+    content_y_end = y;
+}
+
+void lcd_get_size(int *w, int *h) {
+    *w = hres;
+    *h = vres;
+}
+
 void lcd_clear_content(void) {
-    draw_rect_spi(0, content_y_start, hres - 1, vres - 1, gui_bcolour);
+    draw_rect_spi(0, content_y_start, hres - 1, content_y_end - 1, gui_bcolour);
     current_x = 0;
     current_y = content_y_start;
 }
@@ -803,6 +813,7 @@ void lcd_init() {
     pico_lcd_init();
 
     set_font();
+    content_y_end = vres;
     gui_fcolour = GREEN;
     gui_bcolour = BLACK;
 

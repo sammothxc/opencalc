@@ -22,7 +22,9 @@ static int  line_len    = 0;   // number of chars in buffer
 static int  cursor_pos  = 0;   // insertion point (0 = before first char)
 static int  line_start_x, line_start_y;
 static int  fw, fh, ncols;     // font width/height, columns per row
+static int  scr_w, scr_h;     // screen dimensions in pixels
 static int  caps_on = 0;
+static int  bottom_toolbar_y;
 
 // Position the LCD draw cursor at character index i in the current line.
 static void line_goto(int i) {
@@ -187,6 +189,35 @@ static void draw_toolbar(void) {
     lcd_fill_rect(0, fh, ncols * fw - 1, fh + 1, GREEN);
 }
 
+static const char * const fn_labels[] = {
+    "Equations", "Graph", "Apps", "Settings"
+};
+
+static void draw_bottom_toolbar(void) {
+    int box_w = scr_w / 4;   // 80px per box on a 320px screen
+    int sep_y  = bottom_toolbar_y;
+    int label_y = sep_y + 2;
+
+    // Horizontal separator line (2px, mirrors top toolbar)
+    lcd_fill_rect(0, sep_y, scr_w - 1, sep_y + 1, GREEN);
+    // Clear label row
+    lcd_fill_rect(0, label_y, scr_w - 1, label_y + fh - 1, BLACK);
+
+    // Centered labels
+    lcd_set_fg_colour(GREEN);
+    for (int i = 0; i < 4; i++) {
+        int label_px = (int)strlen(fn_labels[i]) * fw;
+        int x = i * box_w + (box_w - label_px) / 2;
+        lcd_set_xy(x, label_y);
+        lcd_print_string((char *)fn_labels[i]);
+    }
+
+    // Vertical separators between boxes
+    for (int i = 1; i < 4; i++) {
+        lcd_fill_rect(i * box_w, sep_y, i * box_w, label_y + fh - 1, GREEN);
+    }
+}
+
 // ── CLI ───────────────────────────────────────────────────────────────────────
 #define PROMPT "> "
 
@@ -259,11 +290,15 @@ int main() {
     init_i2c_kbd();
     lcd_init();
     lcd_get_metrics(&fw, &fh, &ncols);
+    lcd_get_size(&scr_w, &scr_h);
 
     lcd_clear();
     int toolbar_h = fh + 2;
+    bottom_toolbar_y = scr_h - (fh + 2);
     lcd_set_content_start(toolbar_h);
+    lcd_set_content_end(bottom_toolbar_y);
     draw_toolbar();
+    draw_bottom_toolbar();
     lcd_set_xy(0, toolbar_h);
 
 #if KBD_DEBUG
