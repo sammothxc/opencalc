@@ -12,6 +12,8 @@
 // DEBUG: show raw hex of every keyboard event to identify correct key codes.
 #define KBD_DEBUG 0
 
+#include "version.h"
+
 // ── Line input buffer ─────────────────────────────────────────────────────────
 #define LINE_BUF_MAX 256
 
@@ -20,6 +22,7 @@ static int  line_len    = 0;   // number of chars in buffer
 static int  cursor_pos  = 0;   // insertion point (0 = before first char)
 static int  line_start_x, line_start_y;
 static int  fw, fh, ncols;     // font width/height, columns per row
+static int  caps_on = 0;
 
 // Position the LCD draw cursor at character index i in the current line.
 static void line_goto(int i) {
@@ -167,12 +170,28 @@ static int eval_expr(const char *s, double *out) {
     return 1;
 }
 
+// ── Toolbar ───────────────────────────────────────────────────────────────────
+static void draw_toolbar(void) {
+    lcd_fill_rect(0, 0, ncols * fw - 1, fh - 1, BLACK);
+    lcd_set_fg_colour(GREEN);
+    lcd_set_xy(0, 0);
+    lcd_print_string("OpenCalc v" APP_VERSION);
+    if (caps_on) {
+        lcd_set_fg_colour(YELLOW);
+        lcd_set_xy((ncols - 4) * fw, 0);
+        lcd_print_string("CAPS");
+    }
+    lcd_fill_rect(0, fh, ncols * fw - 1, fh + 1, GREEN);
+}
+
 // ── CLI ───────────────────────────────────────────────────────────────────────
 #define PROMPT "> "
 
 static void print_prompt(void) {
+    lcd_set_fg_colour(GREEN);
     lcd_print_string(PROMPT);
     lcd_get_xy(&line_start_x, &line_start_y);
+    lcd_set_fg_colour(WHITE);
 }
 
 static void print_right(const char *s) {
@@ -180,6 +199,7 @@ static void print_right(const char *s) {
     int x, y;
     lcd_get_xy(&x, &y);
     int rx = (ncols - slen) * fw;
+    lcd_set_fg_colour(YELLOW);
     lcd_set_xy(rx < 0 ? 0 : rx, y);
     lcd_print_string(s);
     lcd_putc(0, '\n');
@@ -225,6 +245,10 @@ int main() {
     lcd_get_metrics(&fw, &fh, &ncols);
 
     lcd_clear();
+    int toolbar_h = fh + 2;
+    lcd_set_content_start(toolbar_h);
+    draw_toolbar();
+    lcd_set_xy(0, toolbar_h);
 
 #if KBD_DEBUG
     lcd_print_string("KBD DEBUG\nPress keys to see raw hex\n\n");
@@ -237,7 +261,6 @@ int main() {
         }
     }
 #else
-    lcd_print_string("OpenCalc\n");
     print_prompt();
     lcd_cursor_on();
     int cursor_state = 1;
@@ -262,6 +285,17 @@ int main() {
             else if (c == KEY_RIGHT) input_move_right();
             else if (c == KEY_HOME)  input_home();
             else                     input_end();
+            lcd_cursor_on();
+            cursor_state = 1;
+            last_blink = time_us_64();
+        } else if (c == KEY_CAPS_TOGGLE) {
+            lcd_cursor_off();
+            caps_on ^= 1;
+            int sx, sy;
+            lcd_get_xy(&sx, &sy);
+            draw_toolbar();
+            lcd_set_xy(sx, sy);
+            lcd_set_fg_colour(WHITE);
             lcd_cursor_on();
             cursor_state = 1;
             last_blink = time_us_64();

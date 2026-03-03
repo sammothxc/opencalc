@@ -18,7 +18,7 @@ if (EXISTS ${picoVscode})
 endif()
 set(PICO_BOARD pico2 CACHE STRING "Board type")
 include(pico_sdk_import.cmake)
-project(opencalc C CXX ASM)
+project(opencalc LANGUAGES C CXX ASM)
 
 pico_sdk_init()
 
@@ -50,8 +50,19 @@ target_link_libraries(opencalc
 pico_set_program_name(opencalc "opencalc")
 pico_set_program_version(opencalc "0.1")
 
+# Generate version.h from git commit count on every build
+add_custom_target(version_header ALL
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_DIR=${CMAKE_SOURCE_DIR}
+        -DOUTPUT_FILE=${CMAKE_BINARY_DIR}/version.h
+        -P ${CMAKE_SOURCE_DIR}/version_gen.cmake
+    COMMENT "Generating version.h"
+)
+add_dependencies(opencalc version_header)
+
 target_include_directories(opencalc PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}
+        ${CMAKE_BINARY_DIR}
 )
 
 pico_enable_stdio_uart(opencalc 0)

@@ -1,0 +1,13 @@
+execute_process(
+    COMMAND git rev-list --count HEAD
+    WORKING_DIRECTORY "${SOURCE_DIR}"
+    OUTPUT_VARIABLE GIT_COUNT
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+    RESULT_VARIABLE GIT_RESULT
+)
+if(NOT GIT_RESULT EQUAL 0 OR "${GIT_COUNT}" STREQUAL "")
+    set(GIT_COUNT "0")
+endif()
+file(WRITE "${OUTPUT_FILE}"
+    "#pragma once\n#define APP_VERSION \"0.0.${GIT_COUNT}\"\n")
