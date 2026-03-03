@@ -177,9 +177,12 @@ static void draw_toolbar(void) {
     lcd_set_xy(0, 0);
     lcd_print_string("OpenCalc v" APP_VERSION);
     if (caps_on) {
-        lcd_set_fg_colour(YELLOW);
+        lcd_set_bg_colour(YELLOW);
+        lcd_set_fg_colour(BLACK);
         lcd_set_xy((ncols - 4) * fw, 0);
         lcd_print_string("CAPS");
+        lcd_set_bg_colour(BLACK);
+        lcd_set_fg_colour(GREEN);
     }
     lcd_fill_rect(0, fh, ncols * fw - 1, fh + 1, GREEN);
 }
