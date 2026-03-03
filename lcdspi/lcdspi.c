@@ -715,6 +715,22 @@ static void cursor_rect(int colour) {
     draw_rect_spi(current_x, y, current_x + gui_font_width - 1, y + 1, colour);
 }
 
+void lcd_set_xy(int x, int y) {
+    current_x = (short)x;
+    current_y = (short)y;
+}
+
+void lcd_get_xy(int *x, int *y) {
+    *x = current_x;
+    *y = current_y;
+}
+
+void lcd_get_metrics(int *font_w, int *font_h, int *cols) {
+    *font_w = gui_font_width;
+    *font_h = gui_font_height;
+    *cols = s_width;
+}
+
 void lcd_cursor_move_left(void) {
     current_x -= gui_font_width;
     if (current_x < 0) {
