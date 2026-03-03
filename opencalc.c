@@ -95,6 +95,16 @@ static void print_prompt(void) {
     lcd_get_xy(&line_start_x, &line_start_y);
 }
 
+static void print_right(const char *s) {
+    int slen = (int)strlen(s);
+    int x, y;
+    lcd_get_xy(&x, &y);
+    int rx = (ncols - slen) * fw;
+    lcd_set_xy(rx < 0 ? 0 : rx, y);
+    lcd_print_string(s);
+    lcd_putc(0, '\n');
+}
+
 static void exec_command(const char *cmd, int len) {
     // Trim trailing spaces.
     while (len > 0 && cmd[len - 1] == ' ') len--;
@@ -102,9 +112,9 @@ static void exec_command(const char *cmd, int len) {
     if (len == 0) return;
 
     if (len == 4 && strncmp(cmd, "test", 4) == 0) {
-        lcd_print_string("HelloWorld\n");
+        print_right("HelloWorld");
     } else {
-        lcd_print_string("?\n");
+        print_right("?");
     }
 }
 

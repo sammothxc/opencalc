@@ -778,7 +778,7 @@ void lcd_init() {
     pico_lcd_init();
 
     set_font();
-    gui_fcolour = GREEN;
+    gui_fcolour = WHITE;
     gui_bcolour = BLACK;
 
 }
