@@ -23,6 +23,7 @@ static short hres = 0;
 static short vres = 0;
 static char s_height;
 static char s_width;
+static int cursor_visible = 0;
 int lcd_char_pos = 0;
 unsigned char lcd_buffer[320 * 3] = {0};// 1440 = 480*3, 320*3 = 960
 
@@ -706,6 +707,25 @@ void lcd_spi_init() {
     gpio_put(Pico_LCD_RST, 1);
 }
 
+
+static void cursor_rect(int colour) {
+    int y = current_y + gui_font_height - 2;
+    draw_rect_spi(current_x, y, current_x + gui_font_width - 1, y + 1, colour);
+}
+
+void lcd_cursor_on(void) {
+    if (!cursor_visible) {
+        cursor_rect(gui_fcolour);
+        cursor_visible = 1;
+    }
+}
+
+void lcd_cursor_off(void) {
+    if (cursor_visible) {
+        cursor_rect(gui_bcolour);
+        cursor_visible = 0;
+    }
+}
 
 void lcd_init() {
     lcd_spi_init();

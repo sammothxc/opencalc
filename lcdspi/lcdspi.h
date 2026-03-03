@@ -121,6 +121,8 @@ extern void lcd_sleeping(uint8_t devn);
 extern char lcd_put_char(char c, int flush);
 extern void lcd_print_string(char* s);
 extern void lcd_reset_coords();
+extern void lcd_cursor_on(void);
+extern void lcd_cursor_off(void);
 
 extern void lcd_spi_init();
 extern void lcd_init();
