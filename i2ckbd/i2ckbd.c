@@ -17,6 +17,7 @@ void init_i2c_kbd() {
 int read_i2c_kbd() {
     int retval;
     static int ctrlheld = 0;
+    static int altheld = 0;
     uint16_t buff = 0;
     unsigned char msg[2];
     int c = -1;
@@ -38,11 +39,16 @@ int read_i2c_kbd() {
     }
 
     if (buff != 0) {
-        if (buff == 0x7e03)ctrlheld = 0;
-        else if (buff == 0x7e02) {
-            ctrlheld = 1;
+        if ((buff >> 8) == 0xA5) {
+            ctrlheld = ((buff & 0xff) != 0x03); // 0xA501/A502=held, 0xA503=released
+        } else if ((buff >> 8) == 0xA1) {
+            altheld = ((buff & 0xff) != 0x03);  // 0xA101/A102=held, 0xA103=released
         } else if ((buff & 0xff) == 1) {//pressed
             c = buff >> 8;
+            if (c == 0xD4 && ctrlheld && altheld)
+                return KEY_REBOOT;
+            if (c == 'b' && ctrlheld && altheld)
+                return KEY_BOOTSEL;
             int realc = -1;
             switch (c) {
                 default:
@@ -55,6 +61,24 @@ int read_i2c_kbd() {
         return c;
     }
     return -1;
+}
+
+uint16_t read_i2c_kbd_raw() {
+    int retval;
+    uint16_t buff = 0;
+    unsigned char msg[1];
+    msg[0] = 0x09;
+
+    if (i2c_inited == 0) return 0;
+
+    retval = i2c_write_timeout_us(I2C_KBD_MOD, I2C_KBD_ADDR, msg, 1, false, 500000);
+    if (retval == PICO_ERROR_GENERIC || retval == PICO_ERROR_TIMEOUT) return 0;
+
+    sleep_ms(16);
+    retval = i2c_read_timeout_us(I2C_KBD_MOD, I2C_KBD_ADDR, (unsigned char *)&buff, 2, false, 500000);
+    if (retval == PICO_ERROR_GENERIC || retval == PICO_ERROR_TIMEOUT) return 0;
+
+    return buff;
 }
 
 int read_battery() {

@@ -13,8 +13,12 @@
 
 #define I2C_KBD_ADDR 0x1F
 
+#define KEY_REBOOT   (-2)
+#define KEY_BOOTSEL  (-3)
+
 void init_i2c_kbd();
 int read_i2c_kbd();
+uint16_t read_i2c_kbd_raw();
 int read_battery();
 
 #endif
