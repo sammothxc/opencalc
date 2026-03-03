@@ -22,6 +22,7 @@
 #define KEY_HOME     (-8)
 #define KEY_END      (-9)
 #define KEY_TAB      (-10)
+#define KEY_DEL      (-11)
 
 void init_i2c_kbd();
 int read_i2c_kbd();

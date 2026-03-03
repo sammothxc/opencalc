@@ -46,6 +46,15 @@ static void input_insert(char c) {
     line_goto(cursor_pos);
 }
 
+static void input_delete(void) {
+    if (cursor_pos >= line_len) return;
+    memmove(&line_buf[cursor_pos], &line_buf[cursor_pos + 1],
+            line_len - cursor_pos - 1);
+    line_len--;
+    line_redraw_from(cursor_pos, 1);
+    line_goto(cursor_pos);
+}
+
 static void input_backspace(void) {
     if (cursor_pos == 0) return;
     memmove(&line_buf[cursor_pos - 1], &line_buf[cursor_pos],
@@ -154,6 +163,12 @@ int main() {
             else if (c == KEY_RIGHT) input_move_right();
             else if (c == KEY_HOME)  input_home();
             else                     input_end();
+            lcd_cursor_on();
+            cursor_state = 1;
+            last_blink = time_us_64();
+        } else if (c == KEY_DEL) {
+            lcd_cursor_off();
+            input_delete();
             lcd_cursor_on();
             cursor_state = 1;
             last_blink = time_us_64();
