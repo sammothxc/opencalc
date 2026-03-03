@@ -217,6 +217,10 @@ static void exec_command(const char *cmd, int len) {
         print_right("100%");
         return;
     }
+    if (strcmp(buf, "ver") == 0) {
+        print_right(APP_VERSION);
+        return;
+    }
 
     double result;
     if (eval_expr(buf, &result)) {

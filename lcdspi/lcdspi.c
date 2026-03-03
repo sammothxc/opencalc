@@ -784,6 +784,10 @@ void lcd_set_fg_colour(int colour) {
     gui_fcolour = colour;
 }
 
+void lcd_set_bg_colour(int colour) {
+    gui_bcolour = colour;
+}
+
 void lcd_fill_rect(int x1, int y1, int x2, int y2, int colour) {
     draw_rect_spi(x1, y1, x2, y2, colour);
 }
