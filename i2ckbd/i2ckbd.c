@@ -47,7 +47,7 @@ int read_i2c_kbd() {
             c = buff >> 8;
             if (c == 0xD4 && ctrlheld && altheld)
                 return KEY_REBOOT;
-            if (c == 'b' && ctrlheld && altheld)
+            if (c == 'f' && ctrlheld && altheld)
                 return KEY_BOOTSEL;
             int realc = -1;
             switch (c) {
