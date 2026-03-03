@@ -15,6 +15,10 @@
 
 #define KEY_REBOOT   (-2)
 #define KEY_BOOTSEL  (-3)
+#define KEY_LEFT     (-4)
+#define KEY_RIGHT    (-5)
+#define KEY_UP       (-6)
+#define KEY_DOWN     (-7)
 
 void init_i2c_kbd();
 int read_i2c_kbd();

@@ -388,12 +388,14 @@ void display_put_c(char c) {
     switch (c) {
         case '\b':
             current_x -= gui_font_width;
-            //if (current_x < 0) current_x = 0;
             if (current_x < 0) {  //Go to end of previous line
-                current_y -= gui_font_height;                  //Go up one line
+                current_y -= gui_font_height;
                 if (current_y < 0) current_y = 0;
-                current_x = (s_width - 1) * gui_font_width;  //go to last character
+                current_x = (s_width - 1) * gui_font_width;
             }
+            draw_rect_spi(current_x, current_y,
+                          current_x + gui_font_width - 1, current_y + gui_font_height - 1,
+                          gui_bcolour);
             return;
         case '\r':
             current_x = 0;
@@ -711,6 +713,34 @@ void lcd_spi_init() {
 static void cursor_rect(int colour) {
     int y = current_y + gui_font_height - 2;
     draw_rect_spi(current_x, y, current_x + gui_font_width - 1, y + 1, colour);
+}
+
+void lcd_cursor_move_left(void) {
+    current_x -= gui_font_width;
+    if (current_x < 0) {
+        current_y -= gui_font_height;
+        if (current_y < 0) current_y = 0;
+        current_x = (s_width - 1) * gui_font_width;
+    }
+}
+
+void lcd_cursor_move_right(void) {
+    current_x += gui_font_width;
+    if (current_x >= hres) {
+        current_x = 0;
+        current_y += gui_font_height;
+        if (current_y + gui_font_height > vres) current_y = vres - gui_font_height;
+    }
+}
+
+void lcd_cursor_move_up(void) {
+    current_y -= gui_font_height;
+    if (current_y < 0) current_y = 0;
+}
+
+void lcd_cursor_move_down(void) {
+    current_y += gui_font_height;
+    if (current_y + gui_font_height > vres) current_y = vres - gui_font_height;
 }
 
 void lcd_cursor_on(void) {

@@ -45,10 +45,13 @@ int read_i2c_kbd() {
             altheld = ((buff & 0xff) != 0x03);  // 0xA101/A102=held, 0xA103=released
         } else if ((buff & 0xff) == 1) {//pressed
             c = buff >> 8;
-            if (c == 0xD4 && ctrlheld && altheld)
-                return KEY_REBOOT;
-            if (c == 0x46 && ctrlheld && altheld)
-                return KEY_BOOTSEL;
+            if (c == 0xD4 && ctrlheld && altheld) return KEY_REBOOT;
+            if (c == 0x46 && ctrlheld && altheld) return KEY_BOOTSEL;
+            if (c == 0xB4) return KEY_LEFT;
+            if (c == 0xB5) return KEY_UP;
+            if (c == 0xB6) return KEY_DOWN;
+            if (c == 0xB7) return KEY_RIGHT;
+            if (c == 0xA2 || c == 0xA3 || c == 0xC1) return -1; // shift/capslock: suppress
             int realc = -1;
             switch (c) {
                 default:

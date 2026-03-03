@@ -7,7 +7,6 @@
 #include "lcdspi.h"
 
 // DEBUG: show raw hex of every keyboard event to identify correct key codes.
-// Remove once Ctrl+B value is confirmed.
 #define KBD_DEBUG 0
 
 int main() {
@@ -46,6 +45,15 @@ int main() {
             reset_usb_boot(0, 0);
         } else if (c == KEY_REBOOT) {
             watchdog_reboot(0, 0, 0);
+        } else if (c == KEY_LEFT || c == KEY_RIGHT || c == KEY_UP || c == KEY_DOWN) {
+            lcd_cursor_off();
+            if      (c == KEY_LEFT)  lcd_cursor_move_left();
+            else if (c == KEY_RIGHT) lcd_cursor_move_right();
+            else if (c == KEY_UP)    lcd_cursor_move_up();
+            else                     lcd_cursor_move_down();
+            lcd_cursor_on();
+            cursor_state = 1;
+            last_blink = time_us_64();
         } else if (c > 0) {
             lcd_cursor_off();
             lcd_putc(0, (uint8_t)c);

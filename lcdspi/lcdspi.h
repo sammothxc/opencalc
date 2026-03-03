@@ -123,6 +123,10 @@ extern void lcd_print_string(char* s);
 extern void lcd_reset_coords();
 extern void lcd_cursor_on(void);
 extern void lcd_cursor_off(void);
+extern void lcd_cursor_move_left(void);
+extern void lcd_cursor_move_right(void);
+extern void lcd_cursor_move_up(void);
+extern void lcd_cursor_move_down(void);
 
 extern void lcd_spi_init();
 extern void lcd_init();
