@@ -133,6 +133,8 @@ extern void lcd_set_bg_colour(int colour);
 extern void lcd_fill_rect(int x1, int y1, int x2, int y2, int colour);
 extern void lcd_cursor_on(void);
 extern void lcd_cursor_off(void);
+extern void lcd_cursor_block(char overlay, char restore);
+extern void lcd_cursor_outline(char restore);
 extern void lcd_cursor_move_left(void);
 extern void lcd_cursor_move_right(void);
 extern void lcd_cursor_move_up(void);

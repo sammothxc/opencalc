@@ -3,6 +3,15 @@
 #include "i2ckbd.h"
 
 static uint8_t i2c_inited = 0;
+static int ctrlheld  = 0;
+static int altheld   = 0;
+static int shiftheld = 0;
+
+uint8_t read_modifier_state(void) {
+    return (shiftheld ? MOD_SHIFT : 0)
+         | (altheld   ? MOD_ALT   : 0)
+         | (ctrlheld  ? MOD_CTRL  : 0);
+}
 
 void init_i2c_kbd() {
     gpio_set_function(I2C_KBD_SCL, GPIO_FUNC_I2C);
@@ -16,8 +25,6 @@ void init_i2c_kbd() {
 
 int read_i2c_kbd() {
     int retval;
-    static int ctrlheld = 0;
-    static int altheld = 0;
     uint16_t buff = 0;
     unsigned char msg[2];
     int c = -1;
@@ -40,9 +47,14 @@ int read_i2c_kbd() {
 
     if (buff != 0) {
         if ((buff >> 8) == 0xA5) {
-            ctrlheld = ((buff & 0xff) != 0x03); // 0xA501/A502=held, 0xA503=released
+            ctrlheld  = ((buff & 0xff) != 0x03); // 0xA501/A502=held, 0xA503=released
+            return KEY_MOD_CHANGED;
         } else if ((buff >> 8) == 0xA1) {
-            altheld = ((buff & 0xff) != 0x03);  // 0xA101/A102=held, 0xA103=released
+            altheld   = ((buff & 0xff) != 0x03); // 0xA101/A102=held, 0xA103=released
+            return KEY_MOD_CHANGED;
+        } else if ((buff >> 8) == 0xA2 || (buff >> 8) == 0xA3) {
+            shiftheld = ((buff & 0xff) != 0x03); // shift press/release
+            return KEY_MOD_CHANGED;
         } else if ((buff & 0xff) == 1) {//pressed
             c = buff >> 8;
             if (c == 0xD4 && ctrlheld && altheld) return KEY_REBOOT;

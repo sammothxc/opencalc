@@ -23,7 +23,10 @@ static short hres = 0;
 static short vres = 0;
 static char s_height;
 static char s_width;
-static int cursor_visible = 0;
+static int  cursor_visible = 0;
+static char cursor_block_char   = 0;   // 0 = underline cursor; else block cursor showing this char
+static char cursor_restore_char = ' '; // char to repaint when erasing the block cursor
+static int  cursor_outline = 0;        // 1 = outline box cursor (overrides block/underline)
 static int content_y_start = 0;
 static int content_y_end = 0;
 int lcd_char_pos = 0;
@@ -714,8 +717,42 @@ void lcd_spi_init() {
 
 
 static void cursor_rect(int colour) {
-    int y = current_y + gui_font_height - 2;
-    draw_rect_spi(current_x, y, current_x + gui_font_width - 1, y + 1, colour);
+    int x1 = current_x, y1 = current_y;
+    int x2 = x1 + gui_font_width - 1, y2 = y1 + gui_font_height - 1;
+    if (cursor_outline) {
+        if (colour != gui_bcolour) {
+            // Outline ON: draw four 1px border lines
+            draw_rect_spi(x1, y1, x2, y1,     colour); // top
+            draw_rect_spi(x1, y2, x2, y2,     colour); // bottom
+            draw_rect_spi(x1, y1, x1, y2,     colour); // left
+            draw_rect_spi(x2, y1, x2, y2,     colour); // right
+        } else {
+            // Outline OFF: erase border by redrawing char underneath
+            lcd_print_char(gui_fcolour, gui_bcolour, cursor_restore_char, 1 /* no advance */);
+        }
+    } else if (cursor_block_char == 0) {
+        // Vertical bar cursor (2px wide, left edge of cell)
+        draw_rect_spi(x1, y1, x1 + 1, y2, colour);
+    } else if (colour != gui_bcolour) {
+        // Block cursor ON: fill cell with fg colour, draw overlay char inverted
+        draw_rect_spi(x1, y1, x2, y2, colour);
+        lcd_print_char(gui_bcolour, colour, cursor_block_char, 1 /* no advance */);
+    } else {
+        // Block cursor OFF: restore the char that was underneath
+        lcd_print_char(gui_fcolour, gui_bcolour, cursor_restore_char, 1 /* no advance */);
+    }
+}
+
+void lcd_cursor_block(char overlay, char restore) {
+    cursor_outline      = 0;
+    cursor_block_char   = overlay;
+    cursor_restore_char = restore;
+}
+
+void lcd_cursor_outline(char restore) {
+    cursor_outline      = 1;
+    cursor_block_char   = 0;
+    cursor_restore_char = restore;
 }
 
 void lcd_set_xy(int x, int y) {

@@ -28,10 +28,16 @@
 #define KEY_F2           (-14)
 #define KEY_F3           (-15)
 #define KEY_F4           (-16)
+#define KEY_MOD_CHANGED  (-17)
+
+#define MOD_SHIFT  0x01
+#define MOD_ALT    0x02
+#define MOD_CTRL   0x04
 
 void init_i2c_kbd();
 int read_i2c_kbd();
 uint16_t read_i2c_kbd_raw();
 int read_battery();
+uint8_t read_modifier_state(void);
 
 #endif

@@ -48,6 +48,7 @@ static int  history_pos   = -1;  // -1 = not browsing; 0 = newest, 1 = older...
 static char history_draft[LINE_BUF_MAX]; // saved live input while browsing
 
 static void line_goto(int i);  // forward declaration
+static void cursor_on(void);   // forward declaration
 
 static void history_push(const char *cmd, int len) {
     if (len == 0) return;
@@ -272,15 +273,6 @@ static void draw_toolbar(void) {
     lcd_set_fg_colour(GREEN);
     lcd_set_xy(0, 0);
     lcd_print_string("OpenCalc v" APP_VERSION);
-    if (caps_on) {
-        lcd_fill_rect((ncols - 1) * fw, 0, ncols * fw - 1, fh - 1, GREEN);
-        lcd_set_bg_colour(GREEN);
-        lcd_set_fg_colour(BLACK);
-        lcd_set_xy((ncols - 1) * fw, 0);
-        lcd_putc(0, '^');
-        lcd_set_bg_colour(BLACK);
-        lcd_set_fg_colour(GREEN);
-    }
     lcd_fill_rect(0, fh, ncols * fw - 1, fh + 1, GREEN);
 }
 
@@ -427,7 +419,7 @@ static void enter_equations(void) {
     draw_bottom_toolbar();
     lcd_set_fg_colour(WHITE);
     eq_goto(eq_cpos[eq_sel]);
-    lcd_cursor_on();
+    cursor_on();
 }
 
 // ── Graph screen ──────────────────────────────────────────────────────────────
@@ -646,7 +638,7 @@ static void enter_home(void) {
     draw_bottom_toolbar();
     lcd_set_fg_colour(WHITE);  // restore input fg after toolbar draw
     line_goto(cursor_pos);
-    lcd_cursor_on();
+    cursor_on();
 }
 
 static void print_right(const char *s) {
@@ -706,6 +698,32 @@ static void input_newline(void) {
     cursor_pos = 0;
 }
 
+// ── Block cursor helpers ───────────────────────────────────────────────────────
+// Returns the character currently under the text cursor.
+static char get_cursor_char(void) {
+    if (screen_mode == SCREEN_HOME)
+        return (cursor_pos < line_len) ? line_buf[cursor_pos] : ' ';
+    if (screen_mode == SCREEN_EQUATIONS)
+        return (eq_cpos[eq_sel] < eq_len[eq_sel]) ? eq_buf[eq_sel][eq_cpos[eq_sel]] : ' ';
+    return ' ';
+}
+
+// Turn cursor on, selecting shape/color based on modifier state.
+static void cursor_on(void) {
+    uint8_t mods = read_modifier_state();
+    char restore = get_cursor_char();
+    if (mods & MOD_CTRL) {
+        lcd_set_fg_colour(WHITE);
+        lcd_cursor_outline(restore);
+    } else {
+        int col = (mods & MOD_ALT) ? YELLOW : (mods & MOD_SHIFT) ? GREEN : WHITE;
+        lcd_set_fg_colour(col);
+        lcd_cursor_block(caps_on ? '^' : 0, restore);
+    }
+    lcd_cursor_on();
+    lcd_set_fg_colour(WHITE);
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 int main() {
     set_sys_clock_khz(133000, true);
@@ -738,7 +756,7 @@ int main() {
     }
 #else
     print_prompt();
-    lcd_cursor_on();
+    cursor_on();
     int cursor_state = 1;
     uint64_t last_blink = time_us_64();
 
@@ -748,14 +766,16 @@ int main() {
                 // no blink on settings screen
             } else if (screen_mode != SCREEN_GRAPH) {
                 if (cursor_state) lcd_cursor_off();
-                else              lcd_cursor_on();
+                else              cursor_on();
                 cursor_state ^= 1;
             }
             last_blink = time_us_64();
         }
 
         int c = read_i2c_kbd();
-        if (c == KEY_BOOTSEL) {
+        if (c == KEY_MOD_CHANGED) {
+            if (cursor_state) { lcd_cursor_off(); cursor_on(); }
+        } else if (c == KEY_BOOTSEL) {
             reset_usb_boot(0, 0);
         } else if (c == KEY_REBOOT) {
             watchdog_reboot(0, 0, 0);
@@ -783,7 +803,7 @@ int main() {
                     history_navigate(c == KEY_UP ? 1 : -1);
                 else if (screen_mode == SCREEN_EQUATIONS)
                     eq_nav_vertical(c == KEY_UP ? -1 : 1);
-                lcd_cursor_on();
+                cursor_on();
             }
             cursor_state = 1;
             last_blink = time_us_64();
@@ -810,19 +830,14 @@ int main() {
                         eq_cpos[eq_sel] = eq_len[eq_sel]; eq_goto(eq_len[eq_sel]);
                     }
                 }
-                lcd_cursor_on();
+                cursor_on();
             }
             cursor_state = 1;
             last_blink = time_us_64();
         } else if (c == KEY_CAPS_TOGGLE) {
             lcd_cursor_off();
             caps_on ^= 1;
-            int sx, sy;
-            lcd_get_xy(&sx, &sy);
-            draw_toolbar();
-            lcd_set_xy(sx, sy);
-            lcd_set_fg_colour(WHITE);
-            lcd_cursor_on();
+            cursor_on();
             cursor_state = 1;
             last_blink = time_us_64();
         } else if (c == KEY_DEL) {
@@ -830,7 +845,7 @@ int main() {
                 lcd_cursor_off();
                 if (screen_mode == SCREEN_HOME)       input_delete();
                 else if (screen_mode == SCREEN_EQUATIONS) eq_delete();
-                lcd_cursor_on();
+                cursor_on();
                 cursor_state = 1;
                 last_blink = time_us_64();
             }
@@ -858,7 +873,7 @@ int main() {
                     else if (c == '\r' || c == '\n') { /* enter: no-op for now */ }
                     else                             eq_insert((char)c);
                 }
-                lcd_cursor_on();
+                cursor_on();
             }
             cursor_state = 1;
             last_blink = time_us_64();
