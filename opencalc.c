@@ -1,7 +1,9 @@
 #include <math.h>
+#include <complex.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <ctype.h>
 #include "pico/stdlib.h"
 #include "pico/bootrom.h"
 #include "hardware/clocks.h"
@@ -208,31 +210,79 @@ static void eq_insert_str(const char *s, int len) {
     eq_goto(eq_cpos[eq_sel]);
 }
 
+static int settings_sel[4] = { 0, 0, 0, 0 }; // [0]=number fmt, [1]=decimal, [2]=angle(0=RAD,1=DEG), [3]=graph type
+
 // ── Expression evaluator ──────────────────────────────────────────────────────
-static double eval_x = 0.0;   // current x value for graph plotting
+static double complex eval_x  = 0.0;  // current x value for graph plotting
+static double complex ans     = 0.0;  // last computed answer
 // Grammar (low to high precedence):
 //   expr    = term   (('+' | '-') term)*
 //   term    = power  (('*' | '/') power)*
 //   power   = unary  ('^' unary)*          right-associative
 //   unary   = ('-' | '+') unary | primary
-//   primary = NUMBER | '(' expr ')'
+//   primary = NUMBER | IDENT | IDENT'('expr')' | '('expr')'
 
 typedef struct { const char *p; int err; } Parser;
 
 static void ps_skip(Parser *ps) { while (*ps->p == ' ') ps->p++; }
 
-static double parse_expr(Parser *ps);
+static double complex parse_expr(Parser *ps);
 
-static double parse_primary(Parser *ps) {
+static double complex parse_primary(Parser *ps) {
     ps_skip(ps);
     if (*ps->p == '(') {
         ps->p++;
-        double v = parse_expr(ps);
+        double complex v = parse_expr(ps);
         ps_skip(ps);
         if (*ps->p == ')') ps->p++; else ps->err = 1;
         return v;
     }
-    if (*ps->p == 'x' || *ps->p == 'X') { ps->p++; return eval_x; }
+    // Identifier: constant or function call
+    if (isalpha((unsigned char)*ps->p)) {
+        char name[12]; int n = 0;
+        while (n < 11 && isalpha((unsigned char)ps->p[n]))
+            name[n] = tolower((unsigned char)ps->p[n]), n++;
+        name[n] = '\0';
+        ps->p += n;
+        // Constants (no parentheses)
+        if (!strcmp(name, "pi"))  return M_PI;
+        if (!strcmp(name, "e"))   return M_E;
+        if (!strcmp(name, "i"))   return I;
+        if (!strcmp(name, "x"))   return eval_x;
+        if (!strcmp(name, "ans")) return ans;
+        // Functions — expect '('
+        ps_skip(ps);
+        if (*ps->p != '(') { ps->err = 1; return 0; }
+        ps->p++;
+        double complex a = parse_expr(ps);
+        ps_skip(ps);
+        if (*ps->p == ')') ps->p++; else ps->err = 1;
+        if (ps->err) return 0;
+        int deg = (settings_sel[2] == 1);
+        double to_rad = deg ? M_PI / 180.0 : 1.0;
+        double to_deg = deg ? 180.0 / M_PI : 1.0;
+        if (!strcmp(name, "sin"))   return csin(a * to_rad);
+        if (!strcmp(name, "cos"))   return ccos(a * to_rad);
+        if (!strcmp(name, "tan"))   return ctan(a * to_rad);
+        if (!strcmp(name, "asin"))  return casin(a) * to_deg;
+        if (!strcmp(name, "acos"))  return cacos(a) * to_deg;
+        if (!strcmp(name, "atan"))  return catan(a) * to_deg;
+        if (!strcmp(name, "sinh"))  return csinh(a);
+        if (!strcmp(name, "cosh"))  return ccosh(a);
+        if (!strcmp(name, "tanh"))  return ctanh(a);
+        if (!strcmp(name, "sqrt"))  return csqrt(a);
+        if (!strcmp(name, "cbrt"))  return cpow(a, 1.0/3.0);
+        if (!strcmp(name, "log"))   return clog(a) / log(10.0);
+        if (!strcmp(name, "ln"))    return clog(a);
+        if (!strcmp(name, "exp"))   return cexp(a);
+        if (!strcmp(name, "abs"))   return cabs(a);
+        if (!strcmp(name, "floor")) return floor(creal(a)) + floor(cimag(a)) * I;
+        if (!strcmp(name, "ceil"))  return ceil(creal(a))  + ceil(cimag(a))  * I;
+        if (!strcmp(name, "round")) return round(creal(a)) + round(cimag(a)) * I;
+        if (!strcmp(name, "sign"))  return (creal(a) > 0) - (creal(a) < 0);
+        ps->err = 1; return 0;
+    }
+    // Numeric literal
     char *end;
     double v = strtod(ps->p, &end);
     if (end == ps->p) { ps->err = 1; return 0; }
@@ -240,48 +290,49 @@ static double parse_primary(Parser *ps) {
     return v;
 }
 
-static double parse_unary(Parser *ps) {
+static double complex parse_unary(Parser *ps) {
     ps_skip(ps);
     if (*ps->p == '-') { ps->p++; return -parse_unary(ps); }
     if (*ps->p == '+') { ps->p++; return  parse_unary(ps); }
-    double v = parse_primary(ps);
+    double complex v = parse_primary(ps);
     ps_skip(ps);
     while (*ps->p == '!') {
         ps->p++;
-        if (v < 0 || v != floor(v) || v > 170) { ps->err = 1; return 0; }
+        double rv = creal(v);
+        if (cimag(v) != 0.0 || rv < 0 || rv != floor(rv) || rv > 170) { ps->err = 1; return 0; }
         double f = 1.0;
-        for (long long i = 2; i <= (long long)v; i++) f *= (double)i;
+        for (long long k = 2; k <= (long long)rv; k++) f *= (double)k;
         v = f;
         ps_skip(ps);
     }
     return v;
 }
 
-static double parse_power(Parser *ps) {
-    double b = parse_unary(ps);
+static double complex parse_power(Parser *ps) {
+    double complex b = parse_unary(ps);
     ps_skip(ps);
-    if (*ps->p == '^') { ps->p++; return pow(b, parse_power(ps)); }
+    if (*ps->p == '^') { ps->p++; return cpow(b, parse_power(ps)); }
     return b;
 }
 
-static double parse_term(Parser *ps) {
-    double v = parse_power(ps);
+static double complex parse_term(Parser *ps) {
+    double complex v = parse_power(ps);
     for (;;) {
         ps_skip(ps);
         if (*ps->p == '*') { ps->p++; v *= parse_power(ps); }
-        else if (*ps->p == '(' || *ps->p == 'x' || *ps->p == 'X') { v *= parse_power(ps); }
+        else if (*ps->p == '(' || isalpha((unsigned char)*ps->p)) { v *= parse_power(ps); }
         else if (*ps->p == '/') {
             ps->p++;
-            double d = parse_power(ps);
-            if (d == 0.0) { ps->err = 1; return 0; }
+            double complex d = parse_power(ps);
+            if (cabs(d) == 0.0) { ps->err = 1; return 0; }
             v /= d;
         } else break;
     }
     return v;
 }
 
-static double parse_expr(Parser *ps) {
-    double v = parse_term(ps);
+static double complex parse_expr(Parser *ps) {
+    double complex v = parse_term(ps);
     for (;;) {
         ps_skip(ps);
         if      (*ps->p == '+') { ps->p++; v += parse_term(ps); }
@@ -291,7 +342,7 @@ static double parse_expr(Parser *ps) {
     return v;
 }
 
-static int eval_expr(const char *s, double *out) {
+static int eval_expr(const char *s, double complex *out) {
     Parser ps = { s, 0 };
     *out = parse_expr(&ps);
     ps_skip(&ps);
@@ -299,7 +350,6 @@ static int eval_expr(const char *s, double *out) {
     return 1;
 }
 
-static int settings_sel[4] = { 0, 0, 0, 0 }; // [0]=number fmt, [1]=decimal, [2]=angle(0=RAD,1=DEG), [3]=graph type
 
 // ── Toolbar ───────────────────────────────────────────────────────────────────
 static void draw_toolbar(void) {
@@ -515,9 +565,9 @@ static void draw_graph_screen(void) {
         int colour = eq_row_colours[eq];
         for (int px = 0; px < w; px++) {
             eval_x = graph_xmin + (graph_xmax - graph_xmin) * px / (double)(w - 1);
-            double y;
+            double complex y;
             if (!eval_expr(eq_buf[eq], &y)) continue;
-            int py = gpy(y, ct, ch);
+            int py = gpy(creal(y), ct, ch);
             if (py >= ct && py < ct + ch)
                 lcd_fill_rect(px, py, px, py, colour);
         }
@@ -693,6 +743,56 @@ static void print_right(const char *s) {
     lcd_putc(0, '\n');
 }
 
+static void format_eng(char *out, int out_sz, double val, int dp) {
+    if (!isfinite(val)) { snprintf(out, out_sz, "?"); return; }
+    if (val == 0.0) { snprintf(out, out_sz, "%.*fE+0", dp, 0.0); return; }
+    double av = fabs(val);
+    int e  = (int)floor(log10(av));
+    int ee = e - ((e % 3 + 3) % 3);   // round down to multiple of 3
+    double m = val / pow(10.0, ee);
+    // Fix rounding edge cases
+    if (fabs(m) >= 999.5) { ee += 3; m /= 1000.0; }
+    if (fabs(m) <   0.999 && fabs(m) > 0) { ee -= 3; m *= 1000.0; }
+    snprintf(out, out_sz, "%.*fE%+d", dp, m, ee);
+}
+
+static void format_real(char *out, int out_sz, double val) {
+    int fmt = settings_sel[0]; // 0=Normal, 1=Sci, 2=Eng
+    int dec = settings_sel[1]; // 0=Float, 1=0dp, 2=1dp, …, 10=9dp
+    int dp  = (dec == 0) ? -1 : dec - 1;  // -1 = auto
+    if (fmt == 0 && dp < 0) {
+        // Normal Float: show as integer when exact
+        long long iv = (long long)val;
+        if ((double)iv == val && val > -9e15 && val < 9e15)
+            { snprintf(out, out_sz, "%lld", iv); return; }
+        snprintf(out, out_sz, "%.10g", val);
+    } else if (fmt == 0) {
+        snprintf(out, out_sz, "%.*f", dp, val);       // Normal Fixed
+    } else if (fmt == 1 && dp < 0) {
+        snprintf(out, out_sz, "%.9E", val);            // Sci Float
+    } else if (fmt == 1) {
+        snprintf(out, out_sz, "%.*E", dp, val);        // Sci Fixed
+    } else {
+        format_eng(out, out_sz, val, dp < 0 ? 6 : dp); // Eng
+    }
+}
+
+static void format_result(char *out, int out_sz, double complex val) {
+    double re = creal(val);
+    double im = cimag(val);
+    if (im == 0.0) {
+        format_real(out, out_sz, re);
+        return;
+    }
+    char re_s[32], im_s[32];
+    format_real(re_s, sizeof(re_s), re);
+    format_real(im_s, sizeof(im_s), fabs(im));
+    if (im >= 0.0)
+        snprintf(out, out_sz, "%s+%si", re_s, im_s);
+    else
+        snprintf(out, out_sz, "%s-%si", re_s, im_s);
+}
+
 static void exec_command(const char *cmd, int len) {
     while (len > 0 && cmd[len - 1] == ' ') len--;
     if (len == 0) return;
@@ -714,14 +814,11 @@ static void exec_command(const char *cmd, int len) {
         return;
     }
 
-    double result;
+    double complex result;
     if (eval_expr(buf, &result)) {
-        char out[32];
-        long long ival = (long long)result;
-        if ((double)ival == result)
-            snprintf(out, sizeof(out), "%lld", ival);
-        else
-            snprintf(out, sizeof(out), "%.10g", result);
+        ans = result;
+        char out[64];
+        format_result(out, sizeof(out), result);
         print_right(out);
     } else {
         print_right("?");
