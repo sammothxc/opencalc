@@ -896,7 +896,6 @@ int main() {
                 // All other keypresses ignored on settings screen
             } else {
                 lcd_cursor_off();
-                // Ctrl+C (3) = copy, Ctrl+X (24) = cut, Ctrl+V (22) = paste
                 if (c == 3 || c == 24) {
                     // Copy the whole current line/equation to clipboard
                     if (screen_mode == SCREEN_HOME) {
@@ -906,7 +905,7 @@ int main() {
                         clipboard_len = eq_len[eq_sel];
                         memcpy(clipboard, eq_buf[eq_sel], clipboard_len);
                     }
-                    if (c == 24) {
+                        if (c == 24) {
                         // Cut: also clear the buffer
                         if (screen_mode == SCREEN_HOME)
                             line_replace("");
