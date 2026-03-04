@@ -299,13 +299,23 @@ static int eval_expr(const char *s, double *out) {
     return 1;
 }
 
+static int settings_sel[4] = { 0, 0, 0, 0 }; // [0]=number fmt, [1]=decimal, [2]=angle(0=RAD,1=DEG), [3]=graph type
+
 // ── Toolbar ───────────────────────────────────────────────────────────────────
 static void draw_toolbar(void) {
     lcd_fill_rect(0, 0, ncols * fw - 1, fh - 1, BLACK);
     lcd_set_fg_colour(GREEN);
     lcd_set_xy(0, 0);
     lcd_print_string("OpenCalc v" APP_VERSION);
+    // RAD/DEG indicator — right-aligned, yellow
+    const char *angle_label = (settings_sel[2] == 0) ? "RAD" : "DEG";
+    int label_len = (int)strlen(angle_label);
+    lcd_set_fg_colour(YELLOW);
+    lcd_set_bg_colour(BLACK);
+    lcd_set_xy((ncols - label_len) * fw, 0);
+    lcd_print_string((char *)angle_label);
     lcd_fill_rect(0, fh, ncols * fw - 1, fh + 1, GREEN);
+    lcd_set_fg_colour(WHITE);
 }
 
 static const char * const fn_labels[] = {
@@ -561,7 +571,6 @@ static const int settings_row_count[] = { 3, 11, 2, 4 };
 
 static int settings_row = 0;
 static int settings_col = 0;
-static int settings_sel[4] = { 0, 0, 0, 0 };
 
 // y pixel of settings row r in content area
 static int settings_row_y(int r) {
@@ -892,6 +901,7 @@ int main() {
                     settings_draw_opt(settings_row, settings_col);
                     settings_cursor_draw(1);
                     settings_save(settings_sel);
+                    draw_toolbar(); // refresh top toolbar (e.g. RAD/DEG indicator)
                 }
                 // All other keypresses ignored on settings screen
             } else {
