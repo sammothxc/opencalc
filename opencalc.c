@@ -26,6 +26,74 @@ static int  scr_w, scr_h;     // screen dimensions in pixels
 static int  caps_on = 0;
 static int  bottom_toolbar_y;
 
+// ── Command history ────────────────────────────────────────────────────────────
+#define HISTORY_MAX 5
+static char history[HISTORY_MAX][LINE_BUF_MAX];
+static int  history_count = 0;   // number of valid entries (0..HISTORY_MAX)
+static int  history_head  = 0;   // index of most-recently-added entry (ring)
+static int  history_pos   = -1;  // -1 = not browsing; 0 = newest, 1 = older...
+static char history_draft[LINE_BUF_MAX]; // saved live input while browsing
+
+static void line_goto(int i);  // forward declaration
+
+static void history_push(const char *cmd, int len) {
+    if (len == 0) return;
+    // Don't store duplicates of the most recent entry
+    if (history_count > 0) {
+        int last = (history_head - 1 + HISTORY_MAX) % HISTORY_MAX;
+        if (strncmp(history[last], cmd, len) == 0 && history[last][len] == '\0')
+            return;
+    }
+    memcpy(history[history_head], cmd, len);
+    history[history_head][len] = '\0';
+    history_head = (history_head + 1) % HISTORY_MAX;
+    if (history_count < HISTORY_MAX) history_count++;
+}
+
+// Replace the current input line with s (redraws from start).
+static void line_replace(const char *s) {
+    int new_len = (int)strlen(s);
+    // Erase old content by overwriting with spaces
+    int old_len = line_len;
+    line_goto(0);
+    for (int i = 0; i < old_len; i++) lcd_putc(0, ' ');
+    // Write new content
+    line_len   = new_len;
+    cursor_pos = new_len;
+    memcpy(line_buf, s, new_len);
+    line_buf[new_len] = '\0';
+    line_goto(0);
+    for (int i = 0; i < new_len; i++) lcd_putc(0, (uint8_t)line_buf[i]);
+    line_goto(cursor_pos);
+}
+
+static void history_navigate(int dir) {
+    // dir: -1 = newer (down), +1 = older (up)
+    if (history_count == 0) return;
+
+    if (history_pos == -1) {
+        // Save draft before starting to browse
+        if (dir != 1) return;
+        memcpy(history_draft, line_buf, line_len);
+        history_draft[line_len] = '\0';
+        history_pos = 0;
+    } else {
+        int new_pos = history_pos + dir;
+        if (new_pos < 0) {
+            // Back to draft
+            history_pos = -1;
+            line_replace(history_draft);
+            return;
+        }
+        if (new_pos >= history_count) return; // can't go further back
+        history_pos = new_pos;
+    }
+
+    // Entry at history_pos: 0 = newest
+    int idx = (history_head - 1 - history_pos + HISTORY_MAX * 2) % HISTORY_MAX;
+    line_replace(history[idx]);
+}
+
 // Position the LCD draw cursor at character index i in the current line.
 static void line_goto(int i) {
     int abs_col = (line_start_x / fw) + i;
@@ -235,7 +303,7 @@ static void print_right(const char *s) {
     int rx = (ncols - slen) * fw;
     lcd_set_fg_colour(YELLOW);
     lcd_set_xy(rx < 0 ? 0 : rx, y);
-    lcd_print_string(s);
+    lcd_print_string((char *)s);
     lcd_putc(0, '\n');
 }
 
@@ -275,6 +343,8 @@ static void exec_command(const char *cmd, int len) {
 }
 
 static void input_newline(void) {
+    history_push(line_buf, line_len);
+    history_pos = -1;
     line_goto(line_len);
     lcd_putc(0, '\n');
     exec_command(line_buf, line_len);
@@ -330,6 +400,12 @@ int main() {
             reset_usb_boot(0, 0);
         } else if (c == KEY_REBOOT) {
             watchdog_reboot(0, 0, 0);
+        } else if (c == KEY_UP || c == KEY_DOWN) {
+            lcd_cursor_off();
+            history_navigate(c == KEY_UP ? 1 : -1);
+            lcd_cursor_on();
+            cursor_state = 1;
+            last_blink = time_us_64();
         } else if (c == KEY_LEFT || c == KEY_RIGHT || c == KEY_HOME || c == KEY_END) {
             lcd_cursor_off();
             if      (c == KEY_LEFT)  input_move_left();
@@ -358,9 +434,9 @@ int main() {
             last_blink = time_us_64();
         } else if (c > 0) {
             lcd_cursor_off();
-            if      (c == '\b')              input_backspace();
+            if      (c == '\b')              { history_pos = -1; input_backspace(); }
             else if (c == '\r' || c == '\n') input_newline();
-            else                             input_insert((char)c);
+            else                             { history_pos = -1; input_insert((char)c); }
             lcd_cursor_on();
             cursor_state = 1;
             last_blink = time_us_64();
