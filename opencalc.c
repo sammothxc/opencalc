@@ -27,7 +27,7 @@ static int  caps_on = 0;
 static int  bottom_toolbar_y;
 
 // ── Screen modes ──────────────────────────────────────────────────────────────
-typedef enum { SCREEN_HOME, SCREEN_EQUATIONS } screen_mode_t;
+typedef enum { SCREEN_HOME, SCREEN_EQUATIONS, SCREEN_GRAPH } screen_mode_t;
 static screen_mode_t screen_mode = SCREEN_HOME;
 
 // ── Equations state ───────────────────────────────────────────────────────────
@@ -174,6 +174,7 @@ static void input_end(void) {
 }
 
 // ── Expression evaluator ──────────────────────────────────────────────────────
+static double eval_x = 0.0;   // current x value for graph plotting
 // Grammar (low to high precedence):
 //   expr    = term   (('+' | '-') term)*
 //   term    = power  (('*' | '/') power)*
@@ -196,6 +197,7 @@ static double parse_primary(Parser *ps) {
         if (*ps->p == ')') ps->p++; else ps->err = 1;
         return v;
     }
+    if (*ps->p == 'x' || *ps->p == 'X') { ps->p++; return eval_x; }
     char *end;
     double v = strtod(ps->p, &end);
     if (end == ps->p) { ps->err = 1; return 0; }
@@ -207,7 +209,17 @@ static double parse_unary(Parser *ps) {
     ps_skip(ps);
     if (*ps->p == '-') { ps->p++; return -parse_unary(ps); }
     if (*ps->p == '+') { ps->p++; return  parse_unary(ps); }
-    return parse_primary(ps);
+    double v = parse_primary(ps);
+    ps_skip(ps);
+    while (*ps->p == '!') {
+        ps->p++;
+        if (v < 0 || v != floor(v) || v > 170) { ps->err = 1; return 0; }
+        double f = 1.0;
+        for (long long i = 2; i <= (long long)v; i++) f *= (double)i;
+        v = f;
+        ps_skip(ps);
+    }
+    return v;
 }
 
 static double parse_power(Parser *ps) {
@@ -222,7 +234,7 @@ static double parse_term(Parser *ps) {
     for (;;) {
         ps_skip(ps);
         if (*ps->p == '*') { ps->p++; v *= parse_power(ps); }
-        else if (*ps->p == '(') { v *= parse_power(ps); }
+        else if (*ps->p == '(' || *ps->p == 'x' || *ps->p == 'X') { v *= parse_power(ps); }
         else if (*ps->p == '/') {
             ps->p++;
             double d = parse_power(ps);
@@ -276,6 +288,7 @@ static const char * const fn_labels[] = {
 // Returns the active bottom-toolbar box index for the current screen, or -1.
 static int active_toolbar_box(void) {
     if (screen_mode == SCREEN_EQUATIONS) return 0;
+    if (screen_mode == SCREEN_GRAPH)     return 1;
     return -1;
 }
 
@@ -413,6 +426,75 @@ static void enter_equations(void) {
     lcd_cursor_on();
 }
 
+// ── Graph screen ──────────────────────────────────────────────────────────────
+static double graph_xmin = -10.0, graph_xmax = 10.0;
+static double graph_ymin = -10.0, graph_ymax = 10.0;
+
+// Map math x → pixel x, math y → pixel y within the content area.
+static int gpx(double mx, int w) {
+    return (int)((mx - graph_xmin) / (graph_xmax - graph_xmin) * (w - 1) + 0.5);
+}
+static int gpy(double my, int ct, int ch) {
+    return ct + ch - 1 - (int)((my - graph_ymin) / (graph_ymax - graph_ymin) * (ch - 1) + 0.5);
+}
+
+static void draw_graph_screen(void) {
+    int ct = fh + 2;                  // content top (same as toolbar_h)
+    int ch = bottom_toolbar_y - ct;   // content height in pixels
+    int w  = scr_w;
+
+    lcd_clear_content();
+
+    int ax = gpx(0.0, w);     // pixel x of y-axis
+    int ay = gpy(0.0, ct, ch); // pixel y of x-axis
+
+    // Tick marks at each integer on both axes (MYRTLE = subtle dark green)
+    for (int i = (int)ceil(graph_xmin); i <= (int)floor(graph_xmax); i++) {
+        int px = gpx((double)i, w);
+        if (px >= 0 && px < w && ay >= ct && ay < ct + ch) {
+            int t0 = ay - 2; if (t0 < ct) t0 = ct;
+            int t1 = ay + 2; if (t1 >= ct + ch) t1 = ct + ch - 1;
+            lcd_fill_rect(px, t0, px, t1, MYRTLE);
+        }
+    }
+    for (int j = (int)ceil(graph_ymin); j <= (int)floor(graph_ymax); j++) {
+        int py = gpy((double)j, ct, ch);
+        if (py >= ct && py < ct + ch && ax >= 0 && ax < w) {
+            int t0 = ax - 2; if (t0 < 0) t0 = 0;
+            int t1 = ax + 2; if (t1 >= w) t1 = w - 1;
+            lcd_fill_rect(t0, py, t1, py, MYRTLE);
+        }
+    }
+
+    // Axes (GREEN, drawn over ticks)
+    if (ay >= ct && ay < ct + ch) lcd_fill_rect(0, ay, w - 1, ay, GREEN);
+    if (ax >= 0  && ax < w)       lcd_fill_rect(ax, ct, ax, ct + ch - 1, GREEN);
+
+    // Plot each non-empty equation as a pixel-per-column curve
+    for (int eq = 0; eq < EQ_COUNT; eq++) {
+        if (eq_len[eq] == 0) continue;
+        eq_buf[eq][eq_len[eq]] = '\0';
+        int colour = eq_row_colours[eq];
+        for (int px = 0; px < w; px++) {
+            eval_x = graph_xmin + (graph_xmax - graph_xmin) * px / (double)(w - 1);
+            double y;
+            if (!eval_expr(eq_buf[eq], &y)) continue;
+            int py = gpy(y, ct, ch);
+            if (py >= ct && py < ct + ch)
+                lcd_fill_rect(px, py, px, py, colour);
+        }
+    }
+    eval_x = 0.0;  // reset so CLI 'x' gives 0
+}
+
+static void enter_graph(void) {
+    screen_mode = SCREEN_GRAPH;
+    lcd_cursor_off();
+    draw_graph_screen();
+    draw_bottom_toolbar();
+    // No cursor on graph screen; leave cursor off.
+}
+
 // ── CLI ───────────────────────────────────────────────────────────────────────
 #define PROMPT "> "
 
@@ -529,9 +611,11 @@ int main() {
 
     while (1) {
         if (time_us_64() - last_blink >= 500000) {  // 500ms blink
-            if (cursor_state) lcd_cursor_off();
-            else              lcd_cursor_on();
-            cursor_state ^= 1;
+            if (screen_mode != SCREEN_GRAPH) {
+                if (cursor_state) lcd_cursor_off();
+                else              lcd_cursor_on();
+                cursor_state ^= 1;
+            }
             last_blink = time_us_64();
         }
 
@@ -541,8 +625,13 @@ int main() {
         } else if (c == KEY_REBOOT) {
             watchdog_reboot(0, 0, 0);
         } else if (c == KEY_F1) {
-            if (screen_mode == SCREEN_HOME) enter_equations();
-            else enter_home();
+            if (screen_mode == SCREEN_EQUATIONS) enter_home();
+            else enter_equations();
+            cursor_state = 1;
+            last_blink = time_us_64();
+        } else if (c == KEY_F2) {
+            if (screen_mode == SCREEN_GRAPH) enter_home();
+            else enter_graph();
             cursor_state = 1;
             last_blink = time_us_64();
         } else if (c == KEY_UP || c == KEY_DOWN) {
