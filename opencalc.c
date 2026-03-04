@@ -5,6 +5,8 @@
 #include "pico/stdlib.h"
 #include "pico/bootrom.h"
 #include "hardware/clocks.h"
+#include "hardware/flash.h"
+#include "hardware/sync.h"
 #include "hardware/watchdog.h"
 #include "i2ckbd.h"
 #include "lcdspi.h"
@@ -27,7 +29,7 @@ static int  caps_on = 0;
 static int  bottom_toolbar_y;
 
 // ── Screen modes ──────────────────────────────────────────────────────────────
-typedef enum { SCREEN_HOME, SCREEN_EQUATIONS, SCREEN_GRAPH } screen_mode_t;
+typedef enum { SCREEN_HOME, SCREEN_EQUATIONS, SCREEN_GRAPH, SCREEN_SETTINGS } screen_mode_t;
 static screen_mode_t screen_mode = SCREEN_HOME;
 
 // ── Equations state ───────────────────────────────────────────────────────────
@@ -271,10 +273,11 @@ static void draw_toolbar(void) {
     lcd_set_xy(0, 0);
     lcd_print_string("OpenCalc v" APP_VERSION);
     if (caps_on) {
-        lcd_set_bg_colour(YELLOW);
+        lcd_fill_rect((ncols - 1) * fw, 0, ncols * fw - 1, fh - 1, GREEN);
+        lcd_set_bg_colour(GREEN);
         lcd_set_fg_colour(BLACK);
-        lcd_set_xy((ncols - 4) * fw, 0);
-        lcd_print_string("CAPS");
+        lcd_set_xy((ncols - 1) * fw, 0);
+        lcd_putc(0, '^');
         lcd_set_bg_colour(BLACK);
         lcd_set_fg_colour(GREEN);
     }
@@ -289,6 +292,7 @@ static const char * const fn_labels[] = {
 static int active_toolbar_box(void) {
     if (screen_mode == SCREEN_EQUATIONS) return 0;
     if (screen_mode == SCREEN_GRAPH)     return 1;
+    if (screen_mode == SCREEN_SETTINGS)  return 3;
     return -1;
 }
 
@@ -495,6 +499,133 @@ static void enter_graph(void) {
     // No cursor on graph screen; leave cursor off.
 }
 
+// ── Settings persistence (last flash sector) ──────────────────────────────────
+#define SETTINGS_FLASH_OFFSET (PICO_FLASH_SIZE_BYTES - FLASH_SECTOR_SIZE)
+#define SETTINGS_MAGIC        0x4F43534C   // "LCSO"
+
+typedef struct {
+    uint32_t magic;
+    int      sel[4];
+} settings_data_t;
+
+static void settings_save(const int sel[4]) {
+    uint8_t buf[FLASH_PAGE_SIZE];
+    memset(buf, 0xff, sizeof(buf));
+    settings_data_t *d = (settings_data_t *)buf;
+    d->magic = SETTINGS_MAGIC;
+    memcpy(d->sel, sel, 4 * sizeof(int));
+    uint32_t ints = save_and_disable_interrupts();
+    flash_range_erase(SETTINGS_FLASH_OFFSET, FLASH_SECTOR_SIZE);
+    flash_range_program(SETTINGS_FLASH_OFFSET, buf, FLASH_PAGE_SIZE);
+    restore_interrupts(ints);
+}
+
+static void settings_load(int sel[4]) {
+    const settings_data_t *d =
+        (const settings_data_t *)(XIP_BASE + SETTINGS_FLASH_OFFSET);
+    if (d->magic == SETTINGS_MAGIC)
+        memcpy(sel, d->sel, 4 * sizeof(int));
+}
+
+// ── Settings screen ───────────────────────────────────────────────────────────
+static const char * const srow0[] = { "Normal", "Sci", "Eng" };
+static const char * const srow1[] = { "Float","0","1","2","3","4","5","6","7","8","9" };
+static const char * const srow2[] = { "Radian", "Degree" };
+static const char * const srow3[] = { "Function", "Parametric", "Polar", "Seq" };
+static const char * const *settings_rows[] = { srow0, srow1, srow2, srow3 };
+static const int settings_row_count[] = { 3, 11, 2, 4 };
+
+static int settings_row = 0;
+static int settings_col = 0;
+static int settings_sel[4] = { 0, 0, 0, 0 };
+
+// y pixel of settings row r in content area
+static int settings_row_y(int r) {
+    return (fh + 2) + fh + r * (2 * fh);
+}
+
+// x pixel of option text start for (row, col)
+static int settings_opt_x(int row, int col) {
+    int x = 4;
+    for (int i = 0; i < col; i++)
+        x += (int)strlen(settings_rows[row][i]) * fw + 8;
+    return x;
+}
+
+// Draw one option cell (selected = YELLOW bg / BLACK text, else BLACK bg / WHITE text)
+static void settings_draw_opt(int row, int col) {
+    int y   = settings_row_y(row);
+    int xt  = settings_opt_x(row, col);
+    int optw = (int)strlen(settings_rows[row][col]) * fw;
+    int x0 = xt - 2,  x1 = xt + optw + 1;
+    int y0 = y - 1,   y1 = y + fh;
+    if (settings_sel[row] == col) {
+        lcd_fill_rect(x0, y0, x1, y1, YELLOW);
+        lcd_set_bg_colour(YELLOW);
+        lcd_set_fg_colour(BLACK);
+    } else {
+        lcd_fill_rect(x0, y0, x1, y1, BLACK);
+        lcd_set_bg_colour(BLACK);
+        lcd_set_fg_colour(WHITE);
+    }
+    lcd_set_xy(xt, y);
+    lcd_print_string((char *)settings_rows[row][col]);
+    lcd_set_bg_colour(BLACK);
+    lcd_set_fg_colour(WHITE);
+}
+
+// Draw (visible=1) or erase (visible=0) the blinking box cursor.
+static void settings_cursor_draw(int visible) {
+    int row = settings_row, col = settings_col;
+    int y   = settings_row_y(row);
+    int xt  = settings_opt_x(row, col);
+    int optw = (int)strlen(settings_rows[row][col]) * fw;
+    int x0 = xt - 2,  x1 = xt + optw + 1;
+    int y0 = y - 1,   y1 = y + fh;
+    if (visible) {
+        lcd_fill_rect(x0, y0, x1, y0, WHITE);   // top
+        lcd_fill_rect(x0, y1, x1, y1, WHITE);   // bottom
+        lcd_fill_rect(x0, y0, x0, y1, WHITE);   // left
+        lcd_fill_rect(x1, y0, x1, y1, WHITE);   // right
+    } else {
+        settings_draw_opt(row, col);             // repaint cell without outline
+    }
+}
+
+// Move the settings cursor by (drow, dcol), erasing old and drawing new.
+static void settings_nav(int drow, int dcol) {
+    settings_cursor_draw(0);
+    if (drow != 0) {
+        int nr = settings_row + drow;
+        if (nr < 0 || nr >= 4) { settings_cursor_draw(1); return; }
+        settings_row = nr;
+        if (settings_col >= settings_row_count[settings_row])
+            settings_col = settings_row_count[settings_row] - 1;
+    } else {
+        int nc = settings_col + dcol;
+        if (nc < 0 || nc >= settings_row_count[settings_row]) { settings_cursor_draw(1); return; }
+        settings_col = nc;
+    }
+    settings_cursor_draw(1);
+}
+
+static void draw_settings_screen(void) {
+    lcd_clear_content();
+    for (int r = 0; r < 4; r++)
+        for (int c = 0; c < settings_row_count[r]; c++)
+            settings_draw_opt(r, c);
+    lcd_set_bg_colour(BLACK);
+    lcd_set_fg_colour(GREEN);
+}
+
+static void enter_settings(void) {
+    screen_mode = SCREEN_SETTINGS;
+    lcd_cursor_off();
+    draw_settings_screen();
+    draw_bottom_toolbar();
+    settings_cursor_draw(1);
+}
+
 // ── CLI ───────────────────────────────────────────────────────────────────────
 #define PROMPT "> "
 
@@ -584,6 +715,8 @@ int main() {
     lcd_get_metrics(&fw, &fh, &ncols);
     lcd_get_size(&scr_w, &scr_h);
 
+    settings_load(settings_sel);
+
     lcd_clear();
     int toolbar_h = fh + 2;
     bottom_toolbar_y = scr_h - (fh + 2);
@@ -611,7 +744,9 @@ int main() {
 
     while (1) {
         if (time_us_64() - last_blink >= 500000) {  // 500ms blink
-            if (screen_mode != SCREEN_GRAPH) {
+            if (screen_mode == SCREEN_SETTINGS) {
+                // no blink on settings screen
+            } else if (screen_mode != SCREEN_GRAPH) {
                 if (cursor_state) lcd_cursor_off();
                 else              lcd_cursor_on();
                 cursor_state ^= 1;
@@ -634,34 +769,49 @@ int main() {
             else enter_graph();
             cursor_state = 1;
             last_blink = time_us_64();
+        } else if (c == KEY_F4) {
+            if (screen_mode == SCREEN_SETTINGS) enter_home();
+            else enter_settings();
+            cursor_state = 1;
+            last_blink = time_us_64();
         } else if (c == KEY_UP || c == KEY_DOWN) {
-            lcd_cursor_off();
-            if (screen_mode == SCREEN_HOME)
-                history_navigate(c == KEY_UP ? 1 : -1);
-            else if (screen_mode == SCREEN_EQUATIONS)
-                eq_nav_vertical(c == KEY_UP ? -1 : 1);
-            lcd_cursor_on();
+            if (screen_mode == SCREEN_SETTINGS) {
+                settings_nav(c == KEY_UP ? -1 : 1, 0);
+            } else {
+                lcd_cursor_off();
+                if (screen_mode == SCREEN_HOME)
+                    history_navigate(c == KEY_UP ? 1 : -1);
+                else if (screen_mode == SCREEN_EQUATIONS)
+                    eq_nav_vertical(c == KEY_UP ? -1 : 1);
+                lcd_cursor_on();
+            }
             cursor_state = 1;
             last_blink = time_us_64();
         } else if (c == KEY_LEFT || c == KEY_RIGHT || c == KEY_HOME || c == KEY_END) {
-            lcd_cursor_off();
-            if (screen_mode == SCREEN_HOME) {
-                if      (c == KEY_LEFT)  input_move_left();
-                else if (c == KEY_RIGHT) input_move_right();
-                else if (c == KEY_HOME)  input_home();
-                else                     input_end();
-            } else if (screen_mode == SCREEN_EQUATIONS) {
-                if (c == KEY_LEFT) {
-                    if (eq_cpos[eq_sel] > 0) { eq_cpos[eq_sel]--; eq_goto(eq_cpos[eq_sel]); }
-                } else if (c == KEY_RIGHT) {
-                    if (eq_cpos[eq_sel] < eq_len[eq_sel]) { eq_cpos[eq_sel]++; eq_goto(eq_cpos[eq_sel]); }
-                } else if (c == KEY_HOME) {
-                    eq_cpos[eq_sel] = 0; eq_goto(0);
-                } else {
-                    eq_cpos[eq_sel] = eq_len[eq_sel]; eq_goto(eq_len[eq_sel]);
+            if (screen_mode == SCREEN_SETTINGS) {
+                if (c == KEY_LEFT)  settings_nav(0, -1);
+                else if (c == KEY_RIGHT) settings_nav(0,  1);
+                // HOME/END: ignore on settings
+            } else {
+                lcd_cursor_off();
+                if (screen_mode == SCREEN_HOME) {
+                    if      (c == KEY_LEFT)  input_move_left();
+                    else if (c == KEY_RIGHT) input_move_right();
+                    else if (c == KEY_HOME)  input_home();
+                    else                     input_end();
+                } else if (screen_mode == SCREEN_EQUATIONS) {
+                    if (c == KEY_LEFT) {
+                        if (eq_cpos[eq_sel] > 0) { eq_cpos[eq_sel]--; eq_goto(eq_cpos[eq_sel]); }
+                    } else if (c == KEY_RIGHT) {
+                        if (eq_cpos[eq_sel] < eq_len[eq_sel]) { eq_cpos[eq_sel]++; eq_goto(eq_cpos[eq_sel]); }
+                    } else if (c == KEY_HOME) {
+                        eq_cpos[eq_sel] = 0; eq_goto(0);
+                    } else {
+                        eq_cpos[eq_sel] = eq_len[eq_sel]; eq_goto(eq_len[eq_sel]);
+                    }
                 }
+                lcd_cursor_on();
             }
-            lcd_cursor_on();
             cursor_state = 1;
             last_blink = time_us_64();
         } else if (c == KEY_CAPS_TOGGLE) {
@@ -676,24 +826,40 @@ int main() {
             cursor_state = 1;
             last_blink = time_us_64();
         } else if (c == KEY_DEL) {
-            lcd_cursor_off();
-            if (screen_mode == SCREEN_HOME)       input_delete();
-            else if (screen_mode == SCREEN_EQUATIONS) eq_delete();
-            lcd_cursor_on();
-            cursor_state = 1;
-            last_blink = time_us_64();
-        } else if (c > 0) {
-            lcd_cursor_off();
-            if (screen_mode == SCREEN_HOME) {
-                if      (c == '\b')              { history_pos = -1; input_backspace(); }
-                else if (c == '\r' || c == '\n') input_newline();
-                else                             { history_pos = -1; input_insert((char)c); }
-            } else if (screen_mode == SCREEN_EQUATIONS) {
-                if      (c == '\b') eq_backspace();
-                else if (c == '\r' || c == '\n') { /* enter: no-op for now */ }
-                else                             eq_insert((char)c);
+            if (screen_mode != SCREEN_SETTINGS) {
+                lcd_cursor_off();
+                if (screen_mode == SCREEN_HOME)       input_delete();
+                else if (screen_mode == SCREEN_EQUATIONS) eq_delete();
+                lcd_cursor_on();
+                cursor_state = 1;
+                last_blink = time_us_64();
             }
-            lcd_cursor_on();
+        } else if (c > 0) {
+            if (screen_mode == SCREEN_SETTINGS) {
+                if (c == '\r' || c == '\n') {
+                    // Select the current option for this row
+                    int old = settings_sel[settings_row];
+                    settings_sel[settings_row] = settings_col;
+                    settings_cursor_draw(0);
+                    settings_draw_opt(settings_row, old);
+                    settings_draw_opt(settings_row, settings_col);
+                    settings_cursor_draw(1);
+                    settings_save(settings_sel);
+                }
+                // All other keypresses ignored on settings screen
+            } else {
+                lcd_cursor_off();
+                if (screen_mode == SCREEN_HOME) {
+                    if      (c == '\b')              { history_pos = -1; input_backspace(); }
+                    else if (c == '\r' || c == '\n') input_newline();
+                    else                             { history_pos = -1; input_insert((char)c); }
+                } else if (screen_mode == SCREEN_EQUATIONS) {
+                    if      (c == '\b') eq_backspace();
+                    else if (c == '\r' || c == '\n') { /* enter: no-op for now */ }
+                    else                             eq_insert((char)c);
+                }
+                lcd_cursor_on();
+            }
             cursor_state = 1;
             last_blink = time_us_64();
         }

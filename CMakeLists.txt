@@ -33,6 +33,7 @@ add_executable(opencalc
 target_link_libraries(opencalc
     pico_stdlib
     hardware_flash
+    hardware_sync
     hardware_irq
     hardware_adc
     hardware_pwm

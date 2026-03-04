@@ -59,7 +59,8 @@ int read_i2c_kbd() {
             if (c == 0xC1) return KEY_CAPS_TOGGLE;
             if (c == 0x81) return KEY_F1;
             if (c == 0x82) return KEY_F2;
-            if ((c >= 0x83 && c <= 0x89) || c == 0x90) return -1; // F3-F10
+            if (c == 0x84) return KEY_F4;
+            if ((c >= 0x83 && c <= 0x89) || c == 0x90) return -1; // F3, F5-F10
             if (c == 0xB1 || c == 0xD0) return -1;                 // Esc, BRK
             if (c == 0xD4) return KEY_DEL;                          // Del alone
             int realc = -1;
