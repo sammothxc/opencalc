@@ -26,6 +26,17 @@ static int  scr_w, scr_h;     // screen dimensions in pixels
 static int  caps_on = 0;
 static int  bottom_toolbar_y;
 
+// ── Screen modes ──────────────────────────────────────────────────────────────
+typedef enum { SCREEN_HOME, SCREEN_EQUATIONS } screen_mode_t;
+static screen_mode_t screen_mode = SCREEN_HOME;
+
+// ── Equations state ───────────────────────────────────────────────────────────
+#define EQ_COUNT 3
+static char eq_buf[EQ_COUNT][LINE_BUF_MAX];
+static int  eq_len[EQ_COUNT];
+static int  eq_cpos[EQ_COUNT];
+static int  eq_sel = 0;
+
 // ── Command history ────────────────────────────────────────────────────────────
 #define HISTORY_MAX 5
 static char history[HISTORY_MAX][LINE_BUF_MAX];
@@ -262,29 +273,144 @@ static const char * const fn_labels[] = {
     "Equations", "Graph", "Apps", "Settings"
 };
 
+// Returns the active bottom-toolbar box index for the current screen, or -1.
+static int active_toolbar_box(void) {
+    if (screen_mode == SCREEN_EQUATIONS) return 0;
+    return -1;
+}
+
 static void draw_bottom_toolbar(void) {
     int box_w = scr_w / 4;   // 80px per box on a 320px screen
     int sep_y  = bottom_toolbar_y;
     int label_y = sep_y + 2;
+    int active = active_toolbar_box();
 
     // Horizontal separator line (2px, mirrors top toolbar)
     lcd_fill_rect(0, sep_y, scr_w - 1, sep_y + 1, GREEN);
-    // Clear label row
-    lcd_fill_rect(0, label_y, scr_w - 1, label_y + fh - 1, BLACK);
 
-    // Centered labels
-    lcd_set_fg_colour(GREEN);
+    // Draw each box
     for (int i = 0; i < 4; i++) {
+        int x0 = i * box_w;
+        int x1 = (i + 1) * box_w - 1;
+        if (i == active) {
+            lcd_fill_rect(x0, label_y, x1, label_y + fh - 1, GREEN);
+            lcd_set_bg_colour(GREEN);
+            lcd_set_fg_colour(BLACK);
+        } else {
+            lcd_fill_rect(x0, label_y, x1, label_y + fh - 1, BLACK);
+            lcd_set_bg_colour(BLACK);
+            lcd_set_fg_colour(GREEN);
+        }
         int label_px = (int)strlen(fn_labels[i]) * fw;
-        int x = i * box_w + (box_w - label_px) / 2;
+        int x = x0 + (box_w - label_px) / 2;
         lcd_set_xy(x, label_y);
         lcd_print_string((char *)fn_labels[i]);
     }
+    lcd_set_bg_colour(BLACK);
+    lcd_set_fg_colour(GREEN);
 
-    // Vertical separators between boxes
+    // Vertical separators between boxes (drawn last so they're on top)
     for (int i = 1; i < 4; i++) {
         lcd_fill_rect(i * box_w, sep_y, i * box_w, label_y + fh - 1, GREEN);
     }
+}
+
+// ── Equations screen ──────────────────────────────────────────────────────────
+static const int eq_row_colours[EQ_COUNT] = { CYAN, YELLOW, MAGENTA };
+
+// LCD position at character column within the selected equation's input area.
+static void eq_goto(int col) {
+    lcd_set_xy((3 + col) * fw, (fh + 2) + eq_sel * fh);
+}
+
+// Redraw equation row's input area from column `from` onward.
+static void eq_redraw_from(int row, int from, int clear_tail) {
+    lcd_set_bg_colour(BLACK);
+    lcd_set_fg_colour(WHITE);
+    lcd_set_xy((3 + from) * fw, (fh + 2) + row * fh);
+    for (int i = from; i < eq_len[row]; i++)
+        lcd_putc(0, (uint8_t)eq_buf[row][i]);
+    if (clear_tail) lcd_putc(0, ' ');
+    lcd_set_fg_colour(WHITE);  // keep input fg white after redraw
+}
+
+static void eq_insert(char c) {
+    if (eq_len[eq_sel] >= ncols - 3) return;
+    int p = eq_cpos[eq_sel];
+    memmove(&eq_buf[eq_sel][p + 1], &eq_buf[eq_sel][p], eq_len[eq_sel] - p);
+    eq_buf[eq_sel][p] = c;
+    eq_cpos[eq_sel]++;
+    eq_len[eq_sel]++;
+    eq_redraw_from(eq_sel, p, 0);
+    eq_goto(eq_cpos[eq_sel]);
+}
+
+static void eq_backspace(void) {
+    if (eq_cpos[eq_sel] == 0) return;
+    int p = eq_cpos[eq_sel];
+    memmove(&eq_buf[eq_sel][p - 1], &eq_buf[eq_sel][p], eq_len[eq_sel] - p);
+    eq_cpos[eq_sel]--;
+    eq_len[eq_sel]--;
+    eq_redraw_from(eq_sel, eq_cpos[eq_sel], 1);
+    eq_goto(eq_cpos[eq_sel]);
+}
+
+static void eq_delete(void) {
+    int p = eq_cpos[eq_sel];
+    if (p >= eq_len[eq_sel]) return;
+    memmove(&eq_buf[eq_sel][p], &eq_buf[eq_sel][p + 1], eq_len[eq_sel] - p - 1);
+    eq_len[eq_sel]--;
+    eq_redraw_from(eq_sel, p, 1);
+    eq_goto(p);
+}
+
+static void eq_nav_vertical(int dir) {
+    int new_sel = eq_sel + dir;
+    if (new_sel < 0 || new_sel >= EQ_COUNT) return;
+    int col = eq_cpos[eq_sel];
+    eq_sel = new_sel;
+    if (col > eq_len[eq_sel]) col = eq_len[eq_sel];
+    eq_cpos[eq_sel] = col;
+    eq_goto(eq_cpos[eq_sel]);
+}
+
+static void draw_equations_screen(void) {
+    lcd_clear_content();
+    int content_top = fh + 2;  // same as toolbar_h
+    for (int i = 0; i < EQ_COUNT; i++) {
+        int row_y = content_top + i * fh;
+        // Full row: black background
+        lcd_fill_rect(0, row_y, scr_w - 1, row_y + fh - 1, BLACK);
+        // "Y#" cell highlight (2 chars wide)
+        lcd_fill_rect(0, row_y, 2 * fw - 1, row_y + fh - 1, eq_row_colours[i]);
+        // Draw "Y#" — black text on colour
+        lcd_set_bg_colour(eq_row_colours[i]);
+        lcd_set_fg_colour(BLACK);
+        lcd_set_xy(0, row_y);
+        char yn[3];
+        snprintf(yn, sizeof(yn), "Y%d", i + 1);
+        lcd_print_string(yn);
+        // Draw "=" — white text on black
+        lcd_set_bg_colour(BLACK);
+        lcd_set_fg_colour(WHITE);
+        lcd_print_string("=");
+        // Draw any existing equation content
+        for (int j = 0; j < eq_len[i]; j++)
+            lcd_putc(0, (uint8_t)eq_buf[i][j]);
+    }
+    lcd_set_bg_colour(BLACK);
+    lcd_set_fg_colour(GREEN);
+}
+
+static void enter_equations(void) {
+    screen_mode = SCREEN_EQUATIONS;
+    eq_sel = 0;
+    lcd_cursor_off();
+    draw_equations_screen();
+    draw_bottom_toolbar();
+    lcd_set_fg_colour(WHITE);
+    eq_goto(eq_cpos[eq_sel]);
+    lcd_cursor_on();
 }
 
 // ── CLI ───────────────────────────────────────────────────────────────────────
@@ -295,6 +421,19 @@ static void print_prompt(void) {
     lcd_print_string(PROMPT);
     lcd_get_xy(&line_start_x, &line_start_y);
     lcd_set_fg_colour(WHITE);
+}
+
+static void enter_home(void) {
+    screen_mode = SCREEN_HOME;
+    line_len = 0;
+    cursor_pos = 0;
+    history_pos = -1;
+    lcd_clear_content();
+    print_prompt();
+    draw_bottom_toolbar();
+    lcd_set_fg_colour(WHITE);  // restore input fg after toolbar draw
+    line_goto(cursor_pos);
+    lcd_cursor_on();
 }
 
 static void print_right(const char *s) {
@@ -401,18 +540,38 @@ int main() {
             reset_usb_boot(0, 0);
         } else if (c == KEY_REBOOT) {
             watchdog_reboot(0, 0, 0);
+        } else if (c == KEY_F1) {
+            if (screen_mode == SCREEN_HOME) enter_equations();
+            else enter_home();
+            cursor_state = 1;
+            last_blink = time_us_64();
         } else if (c == KEY_UP || c == KEY_DOWN) {
             lcd_cursor_off();
-            history_navigate(c == KEY_UP ? 1 : -1);
+            if (screen_mode == SCREEN_HOME)
+                history_navigate(c == KEY_UP ? 1 : -1);
+            else if (screen_mode == SCREEN_EQUATIONS)
+                eq_nav_vertical(c == KEY_UP ? -1 : 1);
             lcd_cursor_on();
             cursor_state = 1;
             last_blink = time_us_64();
         } else if (c == KEY_LEFT || c == KEY_RIGHT || c == KEY_HOME || c == KEY_END) {
             lcd_cursor_off();
-            if      (c == KEY_LEFT)  input_move_left();
-            else if (c == KEY_RIGHT) input_move_right();
-            else if (c == KEY_HOME)  input_home();
-            else                     input_end();
+            if (screen_mode == SCREEN_HOME) {
+                if      (c == KEY_LEFT)  input_move_left();
+                else if (c == KEY_RIGHT) input_move_right();
+                else if (c == KEY_HOME)  input_home();
+                else                     input_end();
+            } else if (screen_mode == SCREEN_EQUATIONS) {
+                if (c == KEY_LEFT) {
+                    if (eq_cpos[eq_sel] > 0) { eq_cpos[eq_sel]--; eq_goto(eq_cpos[eq_sel]); }
+                } else if (c == KEY_RIGHT) {
+                    if (eq_cpos[eq_sel] < eq_len[eq_sel]) { eq_cpos[eq_sel]++; eq_goto(eq_cpos[eq_sel]); }
+                } else if (c == KEY_HOME) {
+                    eq_cpos[eq_sel] = 0; eq_goto(0);
+                } else {
+                    eq_cpos[eq_sel] = eq_len[eq_sel]; eq_goto(eq_len[eq_sel]);
+                }
+            }
             lcd_cursor_on();
             cursor_state = 1;
             last_blink = time_us_64();
@@ -429,15 +588,22 @@ int main() {
             last_blink = time_us_64();
         } else if (c == KEY_DEL) {
             lcd_cursor_off();
-            input_delete();
+            if (screen_mode == SCREEN_HOME)       input_delete();
+            else if (screen_mode == SCREEN_EQUATIONS) eq_delete();
             lcd_cursor_on();
             cursor_state = 1;
             last_blink = time_us_64();
         } else if (c > 0) {
             lcd_cursor_off();
-            if      (c == '\b')              { history_pos = -1; input_backspace(); }
-            else if (c == '\r' || c == '\n') input_newline();
-            else                             { history_pos = -1; input_insert((char)c); }
+            if (screen_mode == SCREEN_HOME) {
+                if      (c == '\b')              { history_pos = -1; input_backspace(); }
+                else if (c == '\r' || c == '\n') input_newline();
+                else                             { history_pos = -1; input_insert((char)c); }
+            } else if (screen_mode == SCREEN_EQUATIONS) {
+                if      (c == '\b') eq_backspace();
+                else if (c == '\r' || c == '\n') { /* enter: no-op for now */ }
+                else                             eq_insert((char)c);
+            }
             lcd_cursor_on();
             cursor_state = 1;
             last_blink = time_us_64();

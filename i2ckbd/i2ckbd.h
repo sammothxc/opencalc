@@ -24,6 +24,7 @@
 #define KEY_TAB      (-10)
 #define KEY_DEL          (-11)
 #define KEY_CAPS_TOGGLE  (-12)
+#define KEY_F1           (-13)
 
 void init_i2c_kbd();
 int read_i2c_kbd();
