@@ -19,6 +19,10 @@
 // ── Line input buffer ─────────────────────────────────────────────────────────
 #define LINE_BUF_MAX 256
 
+// ── Clipboard ─────────────────────────────────────────────────────────────────
+static char clipboard[LINE_BUF_MAX];
+static int  clipboard_len = 0;
+
 static char line_buf[LINE_BUF_MAX];
 static int  line_len    = 0;   // number of chars in buffer
 static int  cursor_pos  = 0;   // insertion point (0 = before first char)
@@ -47,8 +51,10 @@ static int  history_head  = 0;   // index of most-recently-added entry (ring)
 static int  history_pos   = -1;  // -1 = not browsing; 0 = newest, 1 = older...
 static char history_draft[LINE_BUF_MAX]; // saved live input while browsing
 
-static void line_goto(int i);  // forward declaration
-static void cursor_on(void);   // forward declaration
+static void line_goto(int i);                        // forward declaration
+static void cursor_on(void);                         // forward declaration
+static void eq_goto(int col);                        // forward declaration
+static void eq_redraw_from(int row, int from, int clear_tail); // forward declaration
 
 static void history_push(const char *cmd, int len) {
     if (len == 0) return;
@@ -174,6 +180,32 @@ static void input_home(void) {
 static void input_end(void) {
     cursor_pos = line_len;
     line_goto(line_len);
+}
+
+static void input_insert_str(const char *s, int len) {
+    int avail = LINE_BUF_MAX - 1 - line_len;
+    if (len > avail) len = avail;
+    if (len <= 0) return;
+    memmove(&line_buf[cursor_pos + len], &line_buf[cursor_pos], line_len - cursor_pos);
+    memcpy(&line_buf[cursor_pos], s, len);
+    cursor_pos += len;
+    line_len   += len;
+    line_buf[line_len] = '\0';
+    line_redraw_from(cursor_pos - len, 0);
+    line_goto(cursor_pos);
+}
+
+static void eq_insert_str(const char *s, int len) {
+    int avail = (ncols - 3) - eq_len[eq_sel];
+    if (len > avail) len = avail;
+    if (len <= 0) return;
+    int p = eq_cpos[eq_sel];
+    memmove(&eq_buf[eq_sel][p + len], &eq_buf[eq_sel][p], eq_len[eq_sel] - p);
+    memcpy(&eq_buf[eq_sel][p], s, len);
+    eq_cpos[eq_sel] += len;
+    eq_len[eq_sel]  += len;
+    eq_redraw_from(eq_sel, p, 0);
+    eq_goto(eq_cpos[eq_sel]);
 }
 
 // ── Expression evaluator ──────────────────────────────────────────────────────
@@ -864,7 +896,37 @@ int main() {
                 // All other keypresses ignored on settings screen
             } else {
                 lcd_cursor_off();
-                if (screen_mode == SCREEN_HOME) {
+                // Ctrl+C (3) = copy, Ctrl+X (24) = cut, Ctrl+V (22) = paste
+                if (c == 3 || c == 24) {
+                    // Copy the whole current line/equation to clipboard
+                    if (screen_mode == SCREEN_HOME) {
+                        clipboard_len = line_len;
+                        memcpy(clipboard, line_buf, line_len);
+                    } else if (screen_mode == SCREEN_EQUATIONS) {
+                        clipboard_len = eq_len[eq_sel];
+                        memcpy(clipboard, eq_buf[eq_sel], clipboard_len);
+                    }
+                    if (c == 24) {
+                        // Cut: also clear the buffer
+                        if (screen_mode == SCREEN_HOME)
+                            line_replace("");
+                        else if (screen_mode == SCREEN_EQUATIONS) {
+                            eq_len[eq_sel] = 0; eq_cpos[eq_sel] = 0;
+                            eq_redraw_from(eq_sel, 0, 1);
+                            eq_goto(0);
+                        }
+                    }
+                } else if (c == 22) {
+                    // Paste at cursor
+                    if (clipboard_len > 0) {
+                        if (screen_mode == SCREEN_HOME) {
+                            history_pos = -1;
+                            input_insert_str(clipboard, clipboard_len);
+                        } else if (screen_mode == SCREEN_EQUATIONS) {
+                            eq_insert_str(clipboard, clipboard_len);
+                        }
+                    }
+                } else if (screen_mode == SCREEN_HOME) {
                     if      (c == '\b')              { history_pos = -1; input_backspace(); }
                     else if (c == '\r' || c == '\n') input_newline();
                     else                             { history_pos = -1; input_insert((char)c); }
