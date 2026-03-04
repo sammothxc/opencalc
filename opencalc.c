@@ -211,6 +211,7 @@ static double parse_term(Parser *ps) {
     for (;;) {
         ps_skip(ps);
         if (*ps->p == '*') { ps->p++; v *= parse_power(ps); }
+        else if (*ps->p == '(') { v *= parse_power(ps); }
         else if (*ps->p == '/') {
             ps->p++;
             double d = parse_power(ps);
