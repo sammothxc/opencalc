@@ -343,7 +343,8 @@ static int settings_sel[5] = { 0, 0, 0, 0, 0 }; // [0]=number fmt, [1]=decimal, 
 static double complex ans     = 0.0;  // last computed answer
 static double complex vars[26] = {0}; // user variables a-z (e, i are read-only constants)
 static char var_expr[26][LINE_BUF_MAX]; // formula strings; empty = plain numeric var
-static int  cycle_detected = 0;       // set when a circular formula reference is found
+static int  cycle_detected  = 0;      // set when a circular formula reference is found
+static int  divzero_detected = 0;     // set when division by zero is attempted
 // Grammar (low to high precedence):
 //   expr    = term   (('+' | '-') term)*
 //   term    = power  (('*' | '/') power)*
@@ -471,7 +472,7 @@ static double complex parse_term(Parser *ps) {
         else if (*ps->p == '/') {
             ps->p++;
             double complex d = parse_power(ps);
-            if (cabs(d) == 0.0) { ps->err = 1; return 0; }
+            if (cabs(d) == 0.0) { divzero_detected = 1; ps->err = 1; return 0; }
             v /= d;
         } else break;
     }
@@ -1128,7 +1129,7 @@ static int exec_rpn(const char *buf) {
                 case '+': r = a + b; break;
                 case '-': r = a - b; break;
                 case '*': r = a * b; break;
-                case '/': if (cabs(b) == 0.0) return 0; r = a / b; break;
+                case '/': if (cabs(b) == 0.0) { divzero_detected = 1; return 0; } r = a / b; break;
                 case '^': r = cpow(a, b); break;
                 default: ok = 0;
             }
@@ -1230,20 +1231,22 @@ static void exec_command(const char *cmd, int len) {
 
     if (settings_sel[4] == 1) {
         // RPN mode: postfix evaluation
-        cycle_detected = 0;
-        if (!exec_rpn(buf)) print_err(cycle_detected ? "cycle" : "?");
+        cycle_detected = 0; divzero_detected = 0;
+        if (!exec_rpn(buf)) print_err(cycle_detected ? "cycle" : divzero_detected ? "div by 0" : "?");
         return;
     }
 
+    if (strcmp(buf, "neg") == 0) { print_err("RPN only"); return; }
+
     double complex result;
-    cycle_detected = 0;
+    cycle_detected = 0; divzero_detected = 0;
     if (eval_expr(buf, &result)) {
         ans = result;
         char out[64];
         format_result(out, sizeof(out), result);
         print_right(out);
     } else {
-        print_err(cycle_detected ? "cycle" : "?");
+        print_err(cycle_detected ? "cycle" : divzero_detected ? "div by 0" : "?");
     }
 }
 

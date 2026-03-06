@@ -1,19 +1,9 @@
 # OpenCalc
  A command line oriented calculator firmware for the [clockwork PicoCalc](https://www.clockworkpi.com/picocalc)
 
-## Functions
-| Command | Description | Usage |
-| --- | --- | --- |
-| ver | Prints the OpenCalc version number |  |
-| cls | Clears the screen |  |
-| bat | Prints the 16-bit integer of battery data from the STM32 |  |
-| name | Renames the PicoCalc | `name(MyCalc)` sets, `name()` clears,  `name` prints |
-| +, -, *, /, () | Basic arithmetic | `3(4-5)/7+25*5` |
-| ^, !, sqrt, cbrt, log, ln, exp, abs, floor, ceil, round, sign, neg | Advanced arithmetic | `2^3`, `32!`, `sqrt(9)` |
-| pi, e, i | Mathematical constants: pi, Euler's number, imaginary unit | `2pi` |
-| sin, cos, tan, asin, acos, atan, sinh, cosh, tanh | Trigonometry | `cos(45)` |
-| all non-mathematical constant letters, ans | Variables | `2a^2+4b+8^c`, `ans/45`, `s=3`, `t=4x^2+7x-3` > `x=5` > `t` prints `132` |
-| cle | Clears all variables |  |
+## Features
+- Command history
+- Command autocompletion
 
 ## Keybinds
 - <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Del</kbd> does a warm reboot, <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>F</kbd> boots into `BOOTSEL` mode
