@@ -73,8 +73,14 @@ int read_i2c_kbd() {
             if (c == 0x82) return KEY_F2;
             if (c == 0x83) return KEY_F3;
             if (c == 0x84) return KEY_F4;
-            if ((c >= 0x85 && c <= 0x89) || c == 0x90) return -1; // F5-F10
-            if (c == 0xB1 || c == 0xD0) return -1;                 // Esc, BRK
+            if (c == 0x85) return -1;                  // F5 unused
+            if (c == 0x86) return KEY_F6;
+            if (c == 0x87) return KEY_F7;
+            if (c == 0x88) return KEY_F8;
+            if (c == 0x89) return KEY_F9;
+            if (c == 0x90) return -1;                  // F10 unused
+            if (c == 0xB1) return KEY_ESC;
+            if (c == 0xD0) return -1;                               // BRK
             if (c == 0xD4) return KEY_DEL;                          // Del alone
             int realc = -1;
             switch (c) {
@@ -83,7 +89,10 @@ int read_i2c_kbd() {
                     break;
             }
             c = realc;
-            if (c >= 'a' && c <= 'z' && ctrlheld)c = c - 'a' + 1;
+            if (c >= 'a' && c <= 'z' && ctrlheld) c = c - 'a' + 1;
+            // Suppress anything that isn't printable ASCII or a known control char
+            if (c > 0 && c != '\b' && c != '\r' && c != '\n' && c != '\t'
+                && (c < 0x20 || c > 0x7E)) return -1;
         }
         return c;
     }

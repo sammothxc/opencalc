@@ -33,9 +33,14 @@ static int  fw, fh, ncols;     // font width/height, columns per row
 static int  scr_w, scr_h;     // screen dimensions in pixels
 static int  caps_on = 0;
 static int  bottom_toolbar_y;
+#define CALC_NAME_MAX 32
+static char calc_name[CALC_NAME_MAX] = {0};
 
 // ── Screen modes ──────────────────────────────────────────────────────────────
-typedef enum { SCREEN_HOME, SCREEN_EQUATIONS, SCREEN_GRAPH, SCREEN_SETTINGS, SCREEN_APPS } screen_mode_t;
+typedef enum {
+    SCREEN_HOME, SCREEN_EQUATIONS, SCREEN_GRAPH, SCREEN_SETTINGS, SCREEN_APPS,
+    SCREEN_TABLE, SCREEN_ZOOM, SCREEN_CALCULATE, SCREEN_3D
+} screen_mode_t;
 static screen_mode_t screen_mode = SCREEN_HOME;
 
 // ── Equations state ───────────────────────────────────────────────────────────
@@ -215,6 +220,8 @@ static int settings_sel[5] = { 0, 0, 0, 0, 0 }; // [0]=number fmt, [1]=decimal, 
 // ── Expression evaluator ──────────────────────────────────────────────────────
 static double complex ans     = 0.0;  // last computed answer
 static double complex vars[26] = {0}; // user variables a-z (e, i are read-only constants)
+static char var_expr[26][LINE_BUF_MAX]; // formula strings; empty = plain numeric var
+static int  cycle_detected = 0;       // set when a circular formula reference is found
 // Grammar (low to high precedence):
 //   expr    = term   (('+' | '-') term)*
 //   term    = power  (('*' | '/') power)*
@@ -227,6 +234,7 @@ typedef struct { const char *p; int err; } Parser;
 static void ps_skip(Parser *ps) { while (*ps->p == ' ') ps->p++; }
 
 static double complex parse_expr(Parser *ps);
+static int eval_expr(const char *s, double complex *out); // forward decl
 
 static double complex parse_primary(Parser *ps) {
     ps_skip(ps);
@@ -250,7 +258,22 @@ static double complex parse_primary(Parser *ps) {
         if (!strcmp(name, "i"))   return I;
         if (!strcmp(name, "ans")) return ans;
         // Single-letter user variable (e and i are caught above as constants)
-        if (n == 1) return vars[(unsigned char)name[0] - 'a'];
+        if (n == 1) {
+            int vi = (unsigned char)name[0] - 'a';
+            if (var_expr[vi][0]) {
+                static uint32_t eval_mask = 0;
+                if (eval_mask & (1u << vi)) {
+                    cycle_detected = 1; ps->err = 1; return 0;
+                }
+                eval_mask |= (1u << vi);
+                double complex result = 0;
+                int ok = eval_expr(var_expr[vi], &result);
+                eval_mask &= ~(1u << vi);
+                if (!ok) { ps->err = 1; return 0; }
+                return result;
+            }
+            return vars[vi];
+        }
         // Functions — expect '('
         ps_skip(ps);
         if (*ps->p != '(') { ps->err = 1; return 0; }
@@ -319,6 +342,7 @@ static double complex parse_power(Parser *ps) {
 static double complex parse_term(Parser *ps) {
     double complex v = parse_power(ps);
     for (;;) {
+        if (ps->err) break;
         ps_skip(ps);
         if (*ps->p == '*') { ps->p++; v *= parse_power(ps); }
         else if (*ps->p == '(' || isalpha((unsigned char)*ps->p)) { v *= parse_power(ps); }
@@ -335,6 +359,7 @@ static double complex parse_term(Parser *ps) {
 static double complex parse_expr(Parser *ps) {
     double complex v = parse_term(ps);
     for (;;) {
+        if (ps->err) break;
         ps_skip(ps);
         if      (*ps->p == '+') { ps->p++; v += parse_term(ps); }
         else if (*ps->p == '-') { ps->p++; v -= parse_term(ps); }
@@ -354,37 +379,64 @@ static int eval_expr(const char *s, double complex *out) {
 
 // ── Toolbar ───────────────────────────────────────────────────────────────────
 static void draw_toolbar(void) {
+    int sx, sy; lcd_get_xy(&sx, &sy);
     lcd_fill_rect(0, 0, ncols * fw - 1, fh - 1, BLACK);
+    // Title: if a custom name is set, alt temporarily reveals the version string
+    int alt_held = (read_modifier_state() & MOD_ALT) != 0;
+    const char *title = (calc_name[0] && alt_held)
+                        ? "OpenCalc v" APP_VERSION
+                        : (calc_name[0] ? calc_name : "OpenCalc v" APP_VERSION);
     lcd_set_fg_colour(GREEN);
     lcd_set_xy(0, 0);
-    lcd_print_string("OpenCalc v" APP_VERSION);
-    // Right-aligned indicators in settings row order: RAD/DEG  FUNC  STD/RPN
+    lcd_print_string((char *)title);
+    // Right side: battery percentage when alt held, otherwise indicators
     lcd_set_fg_colour(YELLOW);
     lcd_set_bg_colour(BLACK);
-    static const char * const graph_labels[] = { "FUNC", "PARA", "POL", "SEQ" };
-    const char *angle_label = (settings_sel[2] == 0) ? "RAD" : "DEG";
-    const char *graph_label = graph_labels[settings_sel[3]];
-    const char *rpn_label   = (settings_sel[4] == 0) ? "STD" : "RPN";
-    int rpn_len   = (int)strlen(rpn_label);
-    int graph_len = (int)strlen(graph_label);
-    int angle_len = (int)strlen(angle_label);
-    // STD/RPN rightmost, FUNC middle, RAD/DEG leftmost
-    lcd_set_xy((ncols - rpn_len) * fw, 0);
-    lcd_print_string((char *)rpn_label);
-    lcd_set_xy((ncols - rpn_len - 1 - graph_len) * fw, 0);
-    lcd_print_string((char *)graph_label);
-    lcd_set_xy((ncols - rpn_len - 1 - graph_len - 1 - angle_len) * fw, 0);
-    lcd_print_string((char *)angle_label);
+    if (alt_held) {
+        const char *bat = "100%";
+        lcd_set_xy((ncols - (int)strlen(bat)) * fw, 0);
+        lcd_print_string((char *)bat);
+    } else {
+        // Indicators in settings row order: RAD/DEG  FUNC  STD/RPN
+        static const char * const graph_labels[] = { "FUNC", "PARA", "POL", "SEQ" };
+        const char *angle_label = (settings_sel[2] == 0) ? "RAD" : "DEG";
+        const char *graph_label = graph_labels[settings_sel[3]];
+        const char *rpn_label   = (settings_sel[4] == 0) ? "STD" : "RPN";
+        int rpn_len   = (int)strlen(rpn_label);
+        int graph_len = (int)strlen(graph_label);
+        int angle_len = (int)strlen(angle_label);
+        lcd_set_xy((ncols - rpn_len) * fw, 0);
+        lcd_print_string((char *)rpn_label);
+        lcd_set_xy((ncols - rpn_len - 1 - graph_len) * fw, 0);
+        lcd_print_string((char *)graph_label);
+        lcd_set_xy((ncols - rpn_len - 1 - graph_len - 1 - angle_len) * fw, 0);
+        lcd_print_string((char *)angle_label);
+    }
     lcd_fill_rect(0, fh, ncols * fw - 1, fh + 1, GREEN);
     lcd_set_fg_colour(WHITE);
+    lcd_set_xy(sx, sy);
 }
 
-static const char * const fn_labels[] = {
-    "Equations", "Graph", "Apps", "Settings"
-};
+static const char * const fn_labels[]  = { "Equations", "Graph", "Apps", "Settings" };
+static const char * const fn2_labels[] = { "Table", "Zoom", "Calculate", "3D" };
+
+// True when the secondary toolbar should be shown (shift held on applicable screens).
+static int use_secondary_toolbar(void) {
+    if (!(read_modifier_state() & MOD_SHIFT)) return 0;
+    return screen_mode == SCREEN_GRAPH     || screen_mode == SCREEN_EQUATIONS
+        || screen_mode == SCREEN_TABLE     || screen_mode == SCREEN_ZOOM
+        || screen_mode == SCREEN_CALCULATE || screen_mode == SCREEN_3D;
+}
 
 // Returns the active bottom-toolbar box index for the current screen, or -1.
 static int active_toolbar_box(void) {
+    if (use_secondary_toolbar()) {
+        if (screen_mode == SCREEN_TABLE)     return 0;
+        if (screen_mode == SCREEN_ZOOM)      return 1;
+        if (screen_mode == SCREEN_CALCULATE) return 2;
+        if (screen_mode == SCREEN_3D)        return 3;
+        return -1;
+    }
     if (screen_mode == SCREEN_EQUATIONS) return 0;
     if (screen_mode == SCREEN_GRAPH)     return 1;
     if (screen_mode == SCREEN_APPS)      return 2;
@@ -393,10 +445,12 @@ static int active_toolbar_box(void) {
 }
 
 static void draw_bottom_toolbar(void) {
+    int sx, sy; lcd_get_xy(&sx, &sy);
     int box_w = scr_w / 4;   // 80px per box on a 320px screen
     int sep_y  = bottom_toolbar_y;
     int label_y = sep_y + 2;
     int active = active_toolbar_box();
+    const char * const *labels = use_secondary_toolbar() ? fn2_labels : fn_labels;
 
     // Horizontal separator line (2px, mirrors top toolbar)
     lcd_fill_rect(0, sep_y, scr_w - 1, sep_y + 1, GREEN);
@@ -414,10 +468,10 @@ static void draw_bottom_toolbar(void) {
             lcd_set_bg_colour(BLACK);
             lcd_set_fg_colour(GREEN);
         }
-        int label_px = (int)strlen(fn_labels[i]) * fw;
+        int label_px = (int)strlen(labels[i]) * fw;
         int x = x0 + (box_w - label_px) / 2;
         lcd_set_xy(x, label_y);
-        lcd_print_string((char *)fn_labels[i]);
+        lcd_print_string((char *)labels[i]);
     }
     lcd_set_bg_colour(BLACK);
     lcd_set_fg_colour(GREEN);
@@ -426,6 +480,9 @@ static void draw_bottom_toolbar(void) {
     for (int i = 1; i < 4; i++) {
         lcd_fill_rect(i * box_w, sep_y, i * box_w, label_y + fh - 1, GREEN);
     }
+    lcd_set_bg_colour(BLACK);
+    lcd_set_fg_colour(WHITE);
+    lcd_set_xy(sx, sy);
 }
 
 // ── Equations screen ──────────────────────────────────────────────────────────
@@ -577,7 +634,11 @@ static void draw_graph_screen(void) {
     // Plot each non-empty equation, connecting consecutive points vertically
     // so steep curves don't appear as sparse dots.
     // Temporarily borrow vars['x'-'a'] for the sweep; restore after.
+    // Also clear any formula on x so the numeric sweep value is used directly.
     double complex saved_x = vars['x' - 'a'];
+    char saved_xexpr[LINE_BUF_MAX];
+    memcpy(saved_xexpr, var_expr['x' - 'a'], LINE_BUF_MAX);
+    var_expr['x' - 'a'][0] = '\0';
     for (int eq = 0; eq < EQ_COUNT; eq++) {
         if (eq_len[eq] == 0) continue;
         eq_buf[eq][eq_len[eq]] = '\0';
@@ -605,7 +666,8 @@ static void draw_graph_screen(void) {
             prev_valid = 1;
         }
     }
-    vars['x' - 'a'] = saved_x;  // restore user's x
+    vars['x' - 'a'] = saved_x;
+    memcpy(var_expr['x' - 'a'], saved_xexpr, LINE_BUF_MAX); // restore user's x formula
 }
 
 static void enter_graph(void) {
@@ -618,11 +680,12 @@ static void enter_graph(void) {
 
 // ── Settings persistence (last flash sector) ──────────────────────────────────
 #define SETTINGS_FLASH_OFFSET (PICO_FLASH_SIZE_BYTES - FLASH_SECTOR_SIZE)
-#define SETTINGS_MAGIC        0x4F43534D   // bump version when struct changes
+#define SETTINGS_MAGIC        0x4F43534E   // bump version when struct changes
 
 typedef struct {
     uint32_t magic;
     int      sel[5];
+    char     name[CALC_NAME_MAX];
 } settings_data_t;
 
 static void settings_save(const int sel[5]) {
@@ -631,6 +694,7 @@ static void settings_save(const int sel[5]) {
     settings_data_t *d = (settings_data_t *)buf;
     d->magic = SETTINGS_MAGIC;
     memcpy(d->sel, sel, 5 * sizeof(int));
+    memcpy(d->name, calc_name, CALC_NAME_MAX);
     uint32_t ints = save_and_disable_interrupts();
     flash_range_erase(SETTINGS_FLASH_OFFSET, FLASH_SECTOR_SIZE);
     flash_range_program(SETTINGS_FLASH_OFFSET, buf, FLASH_PAGE_SIZE);
@@ -640,8 +704,11 @@ static void settings_save(const int sel[5]) {
 static void settings_load(int sel[5]) {
     const settings_data_t *d =
         (const settings_data_t *)(XIP_BASE + SETTINGS_FLASH_OFFSET);
-    if (d->magic == SETTINGS_MAGIC)
+    if (d->magic == SETTINGS_MAGIC) {
         memcpy(sel, d->sel, 5 * sizeof(int));
+        memcpy(calc_name, d->name, CALC_NAME_MAX);
+        calc_name[CALC_NAME_MAX - 1] = '\0';
+    }
 }
 
 // ── Settings screen ───────────────────────────────────────────────────────────
@@ -794,6 +861,16 @@ static void print_prompt(void) {
     lcd_set_fg_colour(WHITE);
 }
 
+static void enter_secondary(screen_mode_t mode, const char *name) {
+    screen_mode = mode;
+    lcd_cursor_off();
+    lcd_clear_content();
+    lcd_set_fg_colour(WHITE);
+    lcd_set_xy(fw, fh + 2 + fh * 2);
+    lcd_print_string((char *)name);
+    draw_bottom_toolbar();
+}
+
 static void enter_home(void) {
     screen_mode = SCREEN_HOME;
     line_len = 0;
@@ -807,16 +884,20 @@ static void enter_home(void) {
     cursor_on();
 }
 
-static void print_right(const char *s) {
+static void print_right_col(const char *s, int colour) {
     int slen = (int)strlen(s);
     int x, y;
     lcd_get_xy(&x, &y);
     int rx = (ncols - slen) * fw;
-    lcd_set_fg_colour(YELLOW);
+    lcd_set_fg_colour(colour);
     lcd_set_xy(rx < 0 ? 0 : rx, y);
     lcd_print_string((char *)s);
     lcd_putc(0, '\n');
+    lcd_set_fg_colour(WHITE);
 }
+static void print_right(const char *s) { print_right_col(s, YELLOW); }
+static void print_ok(const char *s)    { print_right_col(s, GREEN);  }
+static void print_err(const char *s)   { print_right_col(s, RED);    }
 
 static void format_eng(char *out, int out_sz, double val, int dp) {
     if (!isfinite(val)) { snprintf(out, out_sz, "?"); return; }
@@ -977,42 +1058,61 @@ static void exec_command(const char *cmd, int len) {
         print_right(APP_VERSION);
         return;
     }
-    if (strcmp(buf, "clenv") == 0) {
-        memset(vars, 0, sizeof(vars)); ans = 0.0;
-        print_right("ok");
+    if (strcmp(buf, "cle") == 0) {
+        memset(vars, 0, sizeof(vars));
+        memset(var_expr, 0, sizeof(var_expr));
+        ans = 0.0;
+        print_ok("ok");
+        return;
+    }
+    if (strcmp(buf, "name") == 0) {
+        print_right(calc_name[0] ? calc_name : "OpenCalc v" APP_VERSION);
+        return;
+    }
+    if (strncmp(buf, "name(", 5) == 0 && buf[len - 1] == ')') {
+        int nlen = len - 6; // chars between the parens
+        if (nlen <= 0) {
+            calc_name[0] = '\0';
+        } else {
+            int copy = nlen < CALC_NAME_MAX - 1 ? nlen : CALC_NAME_MAX - 1;
+            memcpy(calc_name, buf + 5, copy);
+            calc_name[copy] = '\0';
+        }
+        settings_save(settings_sel);
+        draw_toolbar();
+        print_ok("ok");
         return;
     }
 
-    // Variable assignment: letter=expr (x, y, z, e, i are reserved)
+    // Variable assignment: letter=expr (e, i are read-only constants)
     if (isalpha((unsigned char)buf[0]) && buf[1] == '=') {
         char v = buf[0];
-        if (v == 'e' || v == 'i') { print_right("constant"); return; }
-        double complex rhs;
-        if (eval_expr(buf + 2, &rhs)) {
-            vars[v - 'a'] = rhs;
-            char out[64];
-            format_result(out, sizeof(out), rhs);
-            print_right(out);
-        } else {
-            print_right("?");
-        }
+        if (v == 'e' || v == 'i') { print_err("constant"); return; }
+        const char *rhs_str = buf + 2;
+        // Store expression string for deferred evaluation
+        strncpy(var_expr[v - 'a'], rhs_str, LINE_BUF_MAX - 1);
+        var_expr[v - 'a'][LINE_BUF_MAX - 1] = '\0';
+        vars[v - 'a'] = 0; // clear cached numeric value
+        print_right(rhs_str);
         return;
     }
 
     if (settings_sel[4] == 1) {
         // RPN mode: postfix evaluation
-        if (!exec_rpn(buf)) print_right("?");
+        cycle_detected = 0;
+        if (!exec_rpn(buf)) print_err(cycle_detected ? "cycle" : "?");
         return;
     }
 
     double complex result;
+    cycle_detected = 0;
     if (eval_expr(buf, &result)) {
         ans = result;
         char out[64];
         format_result(out, sizeof(out), result);
         print_right(out);
     } else {
-        print_right("?");
+        print_err(cycle_detected ? "cycle" : "?");
     }
 }
 
@@ -1091,7 +1191,9 @@ int main() {
 
     while (1) {
         if (time_us_64() - last_blink >= 500000) {  // 500ms blink
-            if (screen_mode == SCREEN_SETTINGS || screen_mode == SCREEN_APPS) {
+            if (screen_mode == SCREEN_SETTINGS || screen_mode == SCREEN_APPS
+             || screen_mode == SCREEN_TABLE    || screen_mode == SCREEN_ZOOM
+             || screen_mode == SCREEN_CALCULATE|| screen_mode == SCREEN_3D) {
                 // no blink on these screens
             } else if (screen_mode != SCREEN_GRAPH) {
                 if (cursor_state) lcd_cursor_off();
@@ -1103,11 +1205,27 @@ int main() {
 
         int c = read_i2c_kbd();
         if (c == KEY_MOD_CHANGED) {
-            if (cursor_state) { lcd_cursor_off(); cursor_on(); }
+            uint8_t mod = read_modifier_state();
+            static uint8_t last_mod = 0;
+            if (mod != last_mod) {
+                last_mod = mod;
+                draw_toolbar();
+                // Redraw bottom toolbar when shift toggles on applicable screens
+                if (screen_mode == SCREEN_GRAPH     || screen_mode == SCREEN_EQUATIONS
+                 || screen_mode == SCREEN_TABLE     || screen_mode == SCREEN_ZOOM
+                 || screen_mode == SCREEN_CALCULATE || screen_mode == SCREEN_3D)
+                    draw_bottom_toolbar();
+            }
         } else if (c == KEY_BOOTSEL) {
             reset_usb_boot(0, 0);
         } else if (c == KEY_REBOOT) {
             watchdog_reboot(0, 0, 0);
+        } else if (c == KEY_ESC) {
+            if (screen_mode != SCREEN_HOME) {
+                enter_home();
+                cursor_state = 1;
+                last_blink = time_us_64();
+            }
         } else if (c == KEY_F1) {
             if (screen_mode == SCREEN_EQUATIONS) enter_home();
             else enter_equations();
@@ -1128,6 +1246,14 @@ int main() {
             else enter_settings();
             cursor_state = 1;
             last_blink = time_us_64();
+        } else if (c == KEY_F6 || c == KEY_F7 || c == KEY_F8 || c == KEY_F9) {
+            if (use_secondary_toolbar()) {
+                if      (c == KEY_F6) enter_secondary(SCREEN_TABLE,     "Table");
+                else if (c == KEY_F7) enter_secondary(SCREEN_ZOOM,      "Zoom");
+                else if (c == KEY_F8) enter_secondary(SCREEN_CALCULATE, "Calculate");
+                else                  enter_secondary(SCREEN_3D,        "3D");
+                cursor_state = 1; last_blink = time_us_64();
+            }
         } else if (c == KEY_UP || c == KEY_DOWN) {
             if (screen_mode == SCREEN_SETTINGS) {
                 settings_nav(c == KEY_UP ? -1 : 1, 0);
