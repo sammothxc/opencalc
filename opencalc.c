@@ -213,8 +213,8 @@ static void eq_insert_str(const char *s, int len) {
 static int settings_sel[4] = { 0, 0, 0, 0 }; // [0]=number fmt, [1]=decimal, [2]=angle(0=RAD,1=DEG), [3]=graph type
 
 // ── Expression evaluator ──────────────────────────────────────────────────────
-static double complex eval_x  = 0.0;  // current x value for graph plotting
 static double complex ans     = 0.0;  // last computed answer
+static double complex vars[26] = {0}; // user variables a-z (e, i are read-only constants)
 // Grammar (low to high precedence):
 //   expr    = term   (('+' | '-') term)*
 //   term    = power  (('*' | '/') power)*
@@ -248,8 +248,9 @@ static double complex parse_primary(Parser *ps) {
         if (!strcmp(name, "pi"))  return M_PI;
         if (!strcmp(name, "e"))   return M_E;
         if (!strcmp(name, "i"))   return I;
-        if (!strcmp(name, "x"))   return eval_x;
         if (!strcmp(name, "ans")) return ans;
+        // Single-letter user variable (e and i are caught above as constants)
+        if (n == 1) return vars[(unsigned char)name[0] - 'a'];
         // Functions — expect '('
         ps_skip(ps);
         if (*ps->p != '(') { ps->err = 1; return 0; }
@@ -559,12 +560,14 @@ static void draw_graph_screen(void) {
     if (ax >= 0  && ax < w)       lcd_fill_rect(ax, ct, ax, ct + ch - 1, GREEN);
 
     // Plot each non-empty equation as a pixel-per-column curve
+    // Temporarily borrow vars['x'-'a'] for the sweep; restore after.
+    double complex saved_x = vars['x' - 'a'];
     for (int eq = 0; eq < EQ_COUNT; eq++) {
         if (eq_len[eq] == 0) continue;
         eq_buf[eq][eq_len[eq]] = '\0';
         int colour = eq_row_colours[eq];
         for (int px = 0; px < w; px++) {
-            eval_x = graph_xmin + (graph_xmax - graph_xmin) * px / (double)(w - 1);
+            vars['x' - 'a'] = graph_xmin + (graph_xmax - graph_xmin) * px / (double)(w - 1);
             double complex y;
             if (!eval_expr(eq_buf[eq], &y)) continue;
             int py = gpy(creal(y), ct, ch);
@@ -572,7 +575,7 @@ static void draw_graph_screen(void) {
                 lcd_fill_rect(px, py, px, py, colour);
         }
     }
-    eval_x = 0.0;  // reset so CLI 'x' gives 0
+    vars['x' - 'a'] = saved_x;  // restore user's x
 }
 
 static void enter_graph(void) {
@@ -811,6 +814,27 @@ static void exec_command(const char *cmd, int len) {
     }
     if (strcmp(buf, "ver") == 0) {
         print_right(APP_VERSION);
+        return;
+    }
+    if (strcmp(buf, "clenv") == 0) {
+        memset(vars, 0, sizeof(vars)); ans = 0.0;
+        print_right("ok");
+        return;
+    }
+
+    // Variable assignment: letter=expr (x, y, z, e, i are reserved)
+    if (isalpha((unsigned char)buf[0]) && buf[1] == '=') {
+        char v = buf[0];
+        if (v == 'e' || v == 'i') { print_right("constant"); return; }
+        double complex rhs;
+        if (eval_expr(buf + 2, &rhs)) {
+            vars[v - 'a'] = rhs;
+            char out[64];
+            format_result(out, sizeof(out), rhs);
+            print_right(out);
+        } else {
+            print_right("?");
+        }
         return;
     }
 
