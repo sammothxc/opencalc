@@ -39,7 +39,7 @@ typedef enum { SCREEN_HOME, SCREEN_EQUATIONS, SCREEN_GRAPH, SCREEN_SETTINGS, SCR
 static screen_mode_t screen_mode = SCREEN_HOME;
 
 // ── Equations state ───────────────────────────────────────────────────────────
-#define EQ_COUNT 3
+#define EQ_COUNT 10
 static char eq_buf[EQ_COUNT][LINE_BUF_MAX];
 static int  eq_len[EQ_COUNT];
 static int  eq_cpos[EQ_COUNT];
@@ -198,7 +198,7 @@ static void input_insert_str(const char *s, int len) {
 }
 
 static void eq_insert_str(const char *s, int len) {
-    int avail = (ncols - 3) - eq_len[eq_sel];
+    int avail = (ncols - 4) - eq_len[eq_sel];
     if (len > avail) len = avail;
     if (len <= 0) return;
     int p = eq_cpos[eq_sel];
@@ -429,18 +429,22 @@ static void draw_bottom_toolbar(void) {
 }
 
 // ── Equations screen ──────────────────────────────────────────────────────────
-static const int eq_row_colours[EQ_COUNT] = { CYAN, YELLOW, MAGENTA };
+static const int eq_row_colours[EQ_COUNT] = {
+    CYAN, YELLOW, RGB(128, 0, 128), RED, GREEN, ORANGE, RGB(165, 42, 42), BLUE,
+    RGB(255, 105, 180),   // pink
+    RGB(128, 128, 128),   // grey
+};
 
 // LCD position at character column within the selected equation's input area.
 static void eq_goto(int col) {
-    lcd_set_xy((3 + col) * fw, (fh + 2) + eq_sel * fh);
+    lcd_set_xy((4 + col) * fw, (fh + 2) + eq_sel * fh);
 }
 
 // Redraw equation row's input area from column `from` onward.
 static void eq_redraw_from(int row, int from, int clear_tail) {
     lcd_set_bg_colour(BLACK);
     lcd_set_fg_colour(WHITE);
-    lcd_set_xy((3 + from) * fw, (fh + 2) + row * fh);
+    lcd_set_xy((4 + from) * fw, (fh + 2) + row * fh);
     for (int i = from; i < eq_len[row]; i++)
         lcd_putc(0, (uint8_t)eq_buf[row][i]);
     if (clear_tail) lcd_putc(0, ' ');
@@ -448,7 +452,7 @@ static void eq_redraw_from(int row, int from, int clear_tail) {
 }
 
 static void eq_insert(char c) {
-    if (eq_len[eq_sel] >= ncols - 3) return;
+    if (eq_len[eq_sel] >= ncols - 4) return;
     int p = eq_cpos[eq_sel];
     memmove(&eq_buf[eq_sel][p + 1], &eq_buf[eq_sel][p], eq_len[eq_sel] - p);
     eq_buf[eq_sel][p] = c;
@@ -494,14 +498,14 @@ static void draw_equations_screen(void) {
         int row_y = content_top + i * fh;
         // Full row: black background
         lcd_fill_rect(0, row_y, scr_w - 1, row_y + fh - 1, BLACK);
-        // "Y#" cell highlight (2 chars wide)
-        lcd_fill_rect(0, row_y, 2 * fw - 1, row_y + fh - 1, eq_row_colours[i]);
-        // Draw "Y#" — black text on colour
+        // "Y#" cell highlight (3 chars wide to fit Y10)
+        lcd_fill_rect(0, row_y, 3 * fw - 1, row_y + fh - 1, eq_row_colours[i]);
+        // Draw "Y#" left-justified in 3-char field — black text on colour
         lcd_set_bg_colour(eq_row_colours[i]);
         lcd_set_fg_colour(BLACK);
         lcd_set_xy(0, row_y);
-        char yn[3];
-        snprintf(yn, sizeof(yn), "Y%d", i + 1);
+        char yn[4];
+        snprintf(yn, sizeof(yn), "Y%-2d", i + 1);
         lcd_print_string(yn);
         // Draw "=" — white text on black
         lcd_set_bg_colour(BLACK);
@@ -570,20 +574,35 @@ static void draw_graph_screen(void) {
     if (ay >= ct && ay < ct + ch) lcd_fill_rect(0, ay, w - 1, ay, GREEN);
     if (ax >= 0  && ax < w)       lcd_fill_rect(ax, ct, ax, ct + ch - 1, GREEN);
 
-    // Plot each non-empty equation as a pixel-per-column curve
+    // Plot each non-empty equation, connecting consecutive points vertically
+    // so steep curves don't appear as sparse dots.
     // Temporarily borrow vars['x'-'a'] for the sweep; restore after.
     double complex saved_x = vars['x' - 'a'];
     for (int eq = 0; eq < EQ_COUNT; eq++) {
         if (eq_len[eq] == 0) continue;
         eq_buf[eq][eq_len[eq]] = '\0';
         int colour = eq_row_colours[eq];
+        int prev_py = -1;
+        int prev_valid = 0;
         for (int px = 0; px < w; px++) {
             vars['x' - 'a'] = graph_xmin + (graph_xmax - graph_xmin) * px / (double)(w - 1);
             double complex y;
-            if (!eval_expr(eq_buf[eq], &y)) continue;
+            if (!eval_expr(eq_buf[eq], &y)) { prev_valid = 0; continue; }
             int py = gpy(creal(y), ct, ch);
-            if (py >= ct && py < ct + ch)
+            if (prev_valid) {
+                // Connect prev_py to py with a vertical span on column px-1..px
+                int y0 = prev_py, y1 = py;
+                if (y0 > y1) { int t = y0; y0 = y1; y1 = t; }
+                // clamp to content area
+                if (y0 < ct) y0 = ct;
+                if (y1 >= ct + ch) y1 = ct + ch - 1;
+                if (y0 <= y1)
+                    lcd_fill_rect(px - 1, y0, px, y1, colour);
+            } else if (py >= ct && py < ct + ch) {
                 lcd_fill_rect(px, py, px, py, colour);
+            }
+            prev_py = py;
+            prev_valid = 1;
         }
     }
     vars['x' - 'a'] = saved_x;  // restore user's x
