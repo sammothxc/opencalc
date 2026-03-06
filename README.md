@@ -13,9 +13,10 @@
 - <kbd>Esc</kbd> navigates back to the home screen from anywhere
 
 ## TODO
-- command autocompletion
-- resistor app
+- command suggestions and parameter hints
+- command completion list
 - help function
+- resistor app
 - advanced graph/table/calculation tools
 - file management
 - part lookup

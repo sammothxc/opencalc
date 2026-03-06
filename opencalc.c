@@ -218,13 +218,15 @@ static void eq_insert_str(const char *s, int len) {
 // ── Autocomplete ──────────────────────────────────────────────────────────────
 typedef struct { const char *name; int has_parens; } ac_entry_t;
 static const ac_entry_t ac_table[] = {
-    { "abs",   1 }, { "acos",  1 }, { "asin",  1 }, { "atan",  1 },
-    { "bat",   0 }, { "cbrt",  1 }, { "ceil",  1 }, { "cle",   0 },
-    { "cls",   0 }, { "cos",   1 }, { "cosh",  1 }, { "exp",   1 },
-    { "floor", 1 }, { "ln",    1 }, { "log",   1 }, { "name",  1 },
-    { "neg",   0 }, { "round", 1 }, { "sign",  1 }, { "sin",   1 },
-    { "sinh",  1 }, { "sqrt",  1 }, { "tan",   1 }, { "tanh",  1 },
-    { "ver",   0 },
+    { "abs",   1 }, { "acos",  1 }, { "acosh", 1 }, { "acot",  1 }, { "acoth", 1 },
+    { "acsc",  1 }, { "acsch", 1 }, { "asec",  1 }, { "asech", 1 }, { "asin",  1 },
+    { "asinh", 1 }, { "atan",  1 }, { "atanh", 1 },
+    { "bat",   0 }, { "cbrt",  1 }, { "ceil",  1 }, { "cle",   0 }, { "cls",   0 },
+    { "cos",   1 }, { "cosh",  1 }, { "cot",   1 }, { "coth",  1 }, { "csc",   1 },
+    { "csch",  1 }, { "exp",   1 }, { "floor", 1 }, { "ln",    1 }, { "log",   1 },
+    { "name",  1 }, { "neg",   0 }, { "round", 1 }, { "sec",   1 }, { "sech",  1 },
+    { "sign",  1 }, { "sin",   1 }, { "sinh",  1 }, { "sqrt",  1 }, { "tan",   1 },
+    { "tanh",  1 }, { "ver",   0 },
 };
 #define AC_COUNT ((int)(sizeof(ac_table)/sizeof(ac_table[0])))
 
@@ -411,12 +413,27 @@ static double complex parse_primary(Parser *ps) {
         if (!strcmp(name, "sin"))   return csin(a * to_rad);
         if (!strcmp(name, "cos"))   return ccos(a * to_rad);
         if (!strcmp(name, "tan"))   return ctan(a * to_rad);
+        if (!strcmp(name, "sec"))   return 1.0 / ccos(a * to_rad);
+        if (!strcmp(name, "csc"))   return 1.0 / csin(a * to_rad);
+        if (!strcmp(name, "cot"))   return 1.0 / ctan(a * to_rad);
         if (!strcmp(name, "asin"))  return casin(a) * to_deg;
         if (!strcmp(name, "acos"))  return cacos(a) * to_deg;
         if (!strcmp(name, "atan"))  return catan(a) * to_deg;
+        if (!strcmp(name, "asec"))  return cacos(1.0 / a) * to_deg;
+        if (!strcmp(name, "acsc"))  return casin(1.0 / a) * to_deg;
+        if (!strcmp(name, "acot"))  return catan(1.0 / a) * to_deg;
+        if (!strcmp(name, "asech")) return cacosh(1.0 / a);
+        if (!strcmp(name, "acsch")) return casinh(1.0 / a);
+        if (!strcmp(name, "acoth")) return catanh(1.0 / a);
         if (!strcmp(name, "sinh"))  return csinh(a);
         if (!strcmp(name, "cosh"))  return ccosh(a);
         if (!strcmp(name, "tanh"))  return ctanh(a);
+        if (!strcmp(name, "sech"))  return 1.0 / ccosh(a);
+        if (!strcmp(name, "csch"))  return 1.0 / csinh(a);
+        if (!strcmp(name, "coth"))  return 1.0 / ctanh(a);
+        if (!strcmp(name, "asinh")) return casinh(a);
+        if (!strcmp(name, "acosh")) return cacosh(a);
+        if (!strcmp(name, "atanh")) return catanh(a);
         if (!strcmp(name, "sqrt"))  return csqrt(a);
         if (!strcmp(name, "cbrt"))  return cpow(a, 1.0/3.0);
         if (!strcmp(name, "log"))   return clog(a) / log(10.0);
@@ -1042,16 +1059,25 @@ static void format_eng(char *out, int out_sz, double val, int dp) {
     snprintf(out, out_sz, "%.*fE%+d", dp, m, ee);
 }
 
+static void strip_trailing_zeros(char *s) {
+    if (!strchr(s, '.')) return;
+    char *end = s + strlen(s) - 1;
+    while (*end == '0') *end-- = '\0';
+    if (*end == '.') *end = '\0';
+}
+
 static void format_real(char *out, int out_sz, double val) {
     int fmt = settings_sel[0]; // 0=Normal, 1=Sci, 2=Eng
     int dec = settings_sel[1]; // 0=Float, 1=0dp, 2=1dp, …, 10=9dp
     int dp  = (dec == 0) ? -1 : dec - 1;  // -1 = auto
     if (fmt == 0 && dp < 0) {
-        // Normal Float: show as integer when exact
-        long long iv = (long long)val;
-        if ((double)iv == val && val > -9e15 && val < 9e15)
-            { snprintf(out, out_sz, "%lld", iv); return; }
+        // Normal Float: snap near-integers, then strip trailing zeros
+        double rounded = round(val);
+        if (fabs(val - rounded) <= fabs(val) * 1e-9 + 1e-12
+                && rounded > -9e15 && rounded < 9e15)
+            { snprintf(out, out_sz, "%lld", (long long)rounded); return; }
         snprintf(out, out_sz, "%.10g", val);
+        strip_trailing_zeros(out);
     } else if (fmt == 0) {
         snprintf(out, out_sz, "%.*f", dp, val);       // Normal Fixed
     } else if (fmt == 1 && dp < 0) {
@@ -1146,12 +1172,27 @@ static int exec_rpn(const char *buf) {
         if (!strcmp(tok, "sin"))  { if (sp < 1) return 0; stack[sp-1] = csin(stack[sp-1]); continue; }
         if (!strcmp(tok, "cos"))  { if (sp < 1) return 0; stack[sp-1] = ccos(stack[sp-1]); continue; }
         if (!strcmp(tok, "tan"))  { if (sp < 1) return 0; stack[sp-1] = ctan(stack[sp-1]); continue; }
+        if (!strcmp(tok, "sec"))  { if (sp < 1) return 0; stack[sp-1] = 1.0 / ccos(stack[sp-1]); continue; }
+        if (!strcmp(tok, "csc"))  { if (sp < 1) return 0; stack[sp-1] = 1.0 / csin(stack[sp-1]); continue; }
+        if (!strcmp(tok, "cot"))  { if (sp < 1) return 0; stack[sp-1] = 1.0 / ctan(stack[sp-1]); continue; }
         if (!strcmp(tok, "asin")) { if (sp < 1) return 0; stack[sp-1] = casin(stack[sp-1]); continue; }
         if (!strcmp(tok, "acos")) { if (sp < 1) return 0; stack[sp-1] = cacos(stack[sp-1]); continue; }
         if (!strcmp(tok, "atan")) { if (sp < 1) return 0; stack[sp-1] = catan(stack[sp-1]); continue; }
-        if (!strcmp(tok, "sinh")) { if (sp < 1) return 0; stack[sp-1] = csinh(stack[sp-1]); continue; }
-        if (!strcmp(tok, "cosh")) { if (sp < 1) return 0; stack[sp-1] = ccosh(stack[sp-1]); continue; }
-        if (!strcmp(tok, "tanh")) { if (sp < 1) return 0; stack[sp-1] = ctanh(stack[sp-1]); continue; }
+        if (!strcmp(tok, "asec"))  { if (sp < 1) return 0; stack[sp-1] = cacos(1.0 / stack[sp-1]); continue; }
+        if (!strcmp(tok, "acsc"))  { if (sp < 1) return 0; stack[sp-1] = casin(1.0 / stack[sp-1]); continue; }
+        if (!strcmp(tok, "acot"))  { if (sp < 1) return 0; stack[sp-1] = catan(1.0 / stack[sp-1]); continue; }
+        if (!strcmp(tok, "asech")) { if (sp < 1) return 0; stack[sp-1] = cacosh(1.0 / stack[sp-1]); continue; }
+        if (!strcmp(tok, "acsch")) { if (sp < 1) return 0; stack[sp-1] = casinh(1.0 / stack[sp-1]); continue; }
+        if (!strcmp(tok, "acoth")) { if (sp < 1) return 0; stack[sp-1] = catanh(1.0 / stack[sp-1]); continue; }
+        if (!strcmp(tok, "sinh"))  { if (sp < 1) return 0; stack[sp-1] = csinh(stack[sp-1]); continue; }
+        if (!strcmp(tok, "cosh"))  { if (sp < 1) return 0; stack[sp-1] = ccosh(stack[sp-1]); continue; }
+        if (!strcmp(tok, "tanh"))  { if (sp < 1) return 0; stack[sp-1] = ctanh(stack[sp-1]); continue; }
+        if (!strcmp(tok, "sech"))  { if (sp < 1) return 0; stack[sp-1] = 1.0 / ccosh(stack[sp-1]); continue; }
+        if (!strcmp(tok, "csch"))  { if (sp < 1) return 0; stack[sp-1] = 1.0 / csinh(stack[sp-1]); continue; }
+        if (!strcmp(tok, "coth"))  { if (sp < 1) return 0; stack[sp-1] = 1.0 / ctanh(stack[sp-1]); continue; }
+        if (!strcmp(tok, "asinh")) { if (sp < 1) return 0; stack[sp-1] = casinh(stack[sp-1]); continue; }
+        if (!strcmp(tok, "acosh")) { if (sp < 1) return 0; stack[sp-1] = cacosh(stack[sp-1]); continue; }
+        if (!strcmp(tok, "atanh")) { if (sp < 1) return 0; stack[sp-1] = catanh(stack[sp-1]); continue; }
         if (!strcmp(tok, "log"))  { if (sp < 1) return 0; stack[sp-1] = clog(stack[sp-1]) / log(10.0); continue; }
         if (!strcmp(tok, "ln"))   { if (sp < 1) return 0; stack[sp-1] = clog(stack[sp-1]); continue; }
         if (!strcmp(tok, "exp"))  { if (sp < 1) return 0; stack[sp-1] = cexp(stack[sp-1]); continue; }
