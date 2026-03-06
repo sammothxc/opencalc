@@ -13,7 +13,7 @@ A PicoCalc-based command line calculator firmware
 | sin, cos, tan, asin, acos, atan, sinh, cosh, tanh | Trigonometry | cos(45) |
 | all non-mathematical constant letters, ans | Variables | 2a^2+4b+8^c, ans/45 |
 | clenv | Clear all variables | clenv |
-| log, ln, exp, abs, floor, ceil, round, sign | Other |  |
+| log, ln, exp, abs, floor, ceil, round, sign | Other | TBD |
 
 ## TODO
 - fix scrolling
@@ -22,3 +22,4 @@ A PicoCalc-based command line calculator firmware
 - battery level
 - polish graph screen
 - advanced graph/table/calculation tools
+- file management

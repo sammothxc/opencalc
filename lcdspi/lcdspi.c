@@ -1,6 +1,7 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <stdarg.h>
+#include <string.h>
 
 #include <hardware/spi.h>
 #include "hardware/timer.h"
@@ -31,6 +32,12 @@ static int content_y_start = 0;
 static int content_y_end = 0;
 int lcd_char_pos = 0;
 unsigned char lcd_buffer[320 * 3] = {0};// 1440 = 480*3, 320*3 = 960
+
+// ── Screen text buffer (enables fast scroll without reading display RAM) ───────
+#define SCR_BUF_ROWS 42
+#define SCR_BUF_COLS 54
+static uint8_t  scr_char[SCR_BUF_ROWS][SCR_BUF_COLS];  // character at each cell
+static uint32_t scr_fg  [SCR_BUF_ROWS][SCR_BUF_COLS];  // fg colour at each cell
 
 void __not_in_flash_func(spi_write_fast)(spi_inst_t *spi, const uint8_t *src, size_t len) {
     // Write to TX FIFO whilst ignoring RX, then clean up afterward. When RX
@@ -359,24 +366,47 @@ void lcd_print_char( int fc, int bc, char c, int orientation) {
 
 }
 
-unsigned char scrollbuff[LCD_WIDTH * 3];
+static void redraw_content_from_buf(void) {
+    int fw = gui_font_width, fh = gui_font_height;
+    int content_rows = (content_y_end - content_y_start) / fh;
+    short save_x = current_x, save_y = current_y;
+
+    draw_rect_spi(0, content_y_start, hres - 1, content_y_end - 1, gui_bcolour);
+
+    for (int r = 0; r < content_rows && r < SCR_BUF_ROWS; r++) {
+        for (int c = 0; c < SCR_BUF_COLS && c * fw < hres; c++) {
+            uint8_t ch = scr_char[r][c];
+            if (ch <= ' ') continue;
+            current_x = (short)(c * fw);
+            current_y = (short)(content_y_start + r * fh);
+            lcd_print_char((int)scr_fg[r][c], gui_bcolour, (char)ch, ORIENT_NORMAL);
+        }
+    }
+
+    current_x = save_x;
+    current_y = save_y;
+}
 
 void scroll_lcd_spi(int lines) {
-    if (lines == 0) return;
-    if (lines >= 0) {
-        for (int i = content_y_start; i < content_y_end - lines; i++) {
-            read_buffer_spi(0, i + lines, hres - 1, i + lines, scrollbuff);
-            draw_buffer_spi(0, i, hres - 1, i, scrollbuff);
-        }
-        draw_rect_spi(0, content_y_end - lines, hres - 1, content_y_end - 1, gui_bcolour);
+    if (lines <= 0) return;
+    int fh = gui_font_height;
+    int content_rows = (content_y_end - content_y_start) / fh;
+    int row_shift = lines / fh;
+    if (row_shift < 1) row_shift = 1;
+
+    if (row_shift >= content_rows) {
+        memset(scr_char, ' ', sizeof(scr_char));
     } else {
-        lines = -lines;
-        for (int i = content_y_end - 1; i >= content_y_start + lines; i--) {
-            read_buffer_spi(0, i - lines, hres - 1, i - lines, scrollbuff);
-            draw_buffer_spi(0, i, hres - 1, i, scrollbuff);
-        }
-        draw_rect_spi(0, content_y_start, hres - 1, content_y_start + lines - 1, gui_bcolour);
+        int keep = content_rows - row_shift;
+        memmove(scr_char[0], scr_char[row_shift], (size_t)(keep * SCR_BUF_COLS));
+        memset(scr_char[keep], ' ', (size_t)(row_shift * SCR_BUF_COLS));
+        memmove(scr_fg[0], scr_fg[row_shift], (size_t)(keep * SCR_BUF_COLS * sizeof(uint32_t)));
+        for (int r = keep; r < content_rows && r < SCR_BUF_ROWS; r++)
+            for (int c = 0; c < SCR_BUF_COLS; c++)
+                scr_fg[r][c] = (uint32_t)gui_fcolour;
     }
+
+    redraw_content_from_buf();
 }
 
 void display_put_c(char c) {
@@ -400,6 +430,12 @@ void display_put_c(char c) {
             draw_rect_spi(current_x, current_y,
                           current_x + gui_font_width - 1, current_y + gui_font_height - 1,
                           gui_bcolour);
+            {
+                int r = (current_y - content_y_start) / gui_font_height;
+                int col = current_x / gui_font_width;
+                if (r >= 0 && r < SCR_BUF_ROWS && col >= 0 && col < SCR_BUF_COLS)
+                    scr_char[r][col] = ' ';
+            }
             return;
         case '\r':
             current_x = 0;
@@ -420,7 +456,16 @@ void display_put_c(char c) {
             } while ((current_x / gui_font_width) % 2);// 2 3 4 8
             return;
     }
-    lcd_print_char(gui_fcolour, gui_bcolour, c, ORIENT_NORMAL);// print it
+    {
+        int cx = current_x, cy = current_y;
+        lcd_print_char(gui_fcolour, gui_bcolour, c, ORIENT_NORMAL);// print it
+        int r = (cy - content_y_start) / gui_font_height;
+        int col = cx / gui_font_width;
+        if (r >= 0 && r < SCR_BUF_ROWS && col >= 0 && col < SCR_BUF_COLS) {
+            scr_char[r][col] = (uint8_t)c;
+            scr_fg  [r][col] = (uint32_t)gui_fcolour;
+        }
+    }
 }
 
 /***
@@ -831,6 +876,7 @@ void lcd_clear_content(void) {
     draw_rect_spi(0, content_y_start, hres - 1, content_y_end - 1, gui_bcolour);
     current_x = 0;
     current_y = content_y_start;
+    memset(scr_char, ' ', sizeof(scr_char));
 }
 
 void lcd_set_fg_colour(int colour) {
@@ -843,6 +889,21 @@ void lcd_set_bg_colour(int colour) {
 
 void lcd_fill_rect(int x1, int y1, int x2, int y2, int colour) {
     draw_rect_spi(x1, y1, x2, y2, colour);
+    // When erasing to background within content area, blank the buffer cells
+    if (colour == gui_bcolour && gui_font_height > 0
+            && y1 < content_y_end && y2 >= content_y_start) {
+        int r0 = (y1 - content_y_start) / gui_font_height;
+        int r1 = (y2 - content_y_start) / gui_font_height;
+        int c0 = x1 / gui_font_width;
+        int c1 = x2 / gui_font_width;
+        if (r0 < 0) r0 = 0;
+        if (r1 >= SCR_BUF_ROWS) r1 = SCR_BUF_ROWS - 1;
+        if (c0 < 0) c0 = 0;
+        if (c1 >= SCR_BUF_COLS) c1 = SCR_BUF_COLS - 1;
+        for (int r = r0; r <= r1; r++)
+            for (int c = c0; c <= c1; c++)
+                scr_char[r][c] = ' ';
+    }
 }
 
 void lcd_init() {
@@ -853,5 +914,5 @@ void lcd_init() {
     content_y_end = vres;
     gui_fcolour = GREEN;
     gui_bcolour = BLACK;
-
+    memset(scr_char, ' ', sizeof(scr_char));
 }
