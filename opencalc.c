@@ -215,6 +215,128 @@ static void eq_insert_str(const char *s, int len) {
     eq_goto(eq_cpos[eq_sel]);
 }
 
+// ── Autocomplete ──────────────────────────────────────────────────────────────
+typedef struct { const char *name; int has_parens; } ac_entry_t;
+static const ac_entry_t ac_table[] = {
+    { "abs",   1 }, { "acos",  1 }, { "asin",  1 }, { "atan",  1 },
+    { "bat",   0 }, { "cbrt",  1 }, { "ceil",  1 }, { "cle",   0 },
+    { "cls",   0 }, { "cos",   1 }, { "cosh",  1 }, { "exp",   1 },
+    { "floor", 1 }, { "ln",    1 }, { "log",   1 }, { "name",  1 },
+    { "neg",   0 }, { "round", 1 }, { "sign",  1 }, { "sin",   1 },
+    { "sinh",  1 }, { "sqrt",  1 }, { "tan",   1 }, { "tanh",  1 },
+    { "ver",   0 },
+};
+#define AC_COUNT ((int)(sizeof(ac_table)/sizeof(ac_table[0])))
+
+static int  ac_active     = 0;   // 1 while cycling through completions
+static int  ac_start      = 0;   // line_buf index where the prefix begins
+static char ac_prefix[16];       // original typed prefix
+static int  ac_prefix_len = 0;
+static int  ac_idx        = 0;   // current match index in ac_table
+static int  ac_has_parens = 0;   // whether current insertion includes "()"
+static int  ac_old_ins_len = 0;  // length of the previously inserted completion text
+
+static void do_autocomplete(void) {
+    char prefix[16];
+    int  plen, pstart;
+    int  search_from = 0;
+
+    if (ac_active) {
+        // Remove the previously inserted completion from the buffer.
+        // If has_parens: cursor is between '(' and ')' so old text ends at cursor_pos+1.
+        // If no parens:  cursor is right after the name so old text ends at cursor_pos.
+        int old_end    = ac_has_parens ? cursor_pos + 1 : cursor_pos;
+        int remove_len = old_end - ac_start;
+        if (remove_len > 0 && old_end <= line_len) {
+            memmove(&line_buf[ac_start], &line_buf[old_end], line_len - old_end);
+            line_len   -= remove_len;
+            cursor_pos  = ac_start;
+            line_buf[line_len] = '\0';
+        } else {
+            ac_active = 0;  // state mismatch — fall through to fresh start
+        }
+        pstart = ac_start;
+        plen   = ac_prefix_len;
+        memcpy(prefix, ac_prefix, plen);
+        prefix[plen]  = '\0';
+        search_from   = (ac_idx + 1) % AC_COUNT;
+    }
+
+    if (!ac_active) {
+        // Fresh: find the alphabetic run immediately before the cursor.
+        pstart = cursor_pos;
+        while (pstart > 0 && isalpha((unsigned char)line_buf[pstart - 1]))
+            pstart--;
+        plen = cursor_pos - pstart;
+        if (plen == 0 || plen >= (int)sizeof(prefix)) return;
+        memcpy(prefix, &line_buf[pstart], plen);
+        prefix[plen] = '\0';
+        // Remove the prefix from the buffer (it will be replaced by the completion).
+        memmove(&line_buf[pstart], &line_buf[cursor_pos], line_len - cursor_pos);
+        line_len   -= plen;
+        cursor_pos  = pstart;
+        line_buf[line_len] = '\0';
+        search_from    = 0;
+        ac_old_ins_len = 0;
+    }
+
+    // Two-pass search: forward from search_from, then wrap if cycling.
+    int found = -1;
+    for (int pass = 0; pass < 2 && found == -1; pass++) {
+        int s = (pass == 0) ? search_from : 0;
+        int e = (pass == 0) ? AC_COUNT    : search_from;
+        for (int i = s; i < e; i++) {
+            if (strncmp(ac_table[i].name, prefix, plen) == 0) {
+                found = i; break;
+            }
+        }
+        if (!ac_active) break;  // no wrap on first press
+    }
+
+    if (found == -1) {
+        // No match: restore the prefix so the buffer is unchanged.
+        if (line_len + plen < LINE_BUF_MAX) {
+            memmove(&line_buf[pstart + plen], &line_buf[pstart], line_len - pstart);
+            memcpy(&line_buf[pstart], prefix, plen);
+            line_len   += plen;
+            cursor_pos  = pstart + plen;
+            line_buf[line_len] = '\0';
+        }
+        ac_active = 0;
+        return;
+    }
+
+    // Insert the completion.
+    const char *match      = ac_table[found].name;
+    int         mlen       = (int)strlen(match);
+    int         has_parens = ac_table[found].has_parens;
+    int         ins_len    = mlen + (has_parens ? 2 : 0);
+    if (line_len + ins_len >= LINE_BUF_MAX) { ac_active = 0; return; }
+
+    memmove(&line_buf[pstart + ins_len], &line_buf[pstart], line_len - pstart);
+    memcpy(&line_buf[pstart], match, mlen);
+    if (has_parens) { line_buf[pstart + mlen] = '('; line_buf[pstart + mlen + 1] = ')'; }
+    line_len   += ins_len;
+    line_buf[line_len] = '\0';
+    cursor_pos  = pstart + mlen + (has_parens ? 1 : 0);
+
+    // Redraw from pstart; if the new completion is shorter than the old, clear the gap.
+    line_goto(pstart);
+    for (int i = pstart; i < line_len; i++) lcd_putc(0, (uint8_t)line_buf[i]);
+    for (int i = line_len; i < pstart + ac_old_ins_len; i++) lcd_putc(0, ' ');
+    line_goto(cursor_pos);
+
+    // Save state for the next Tab press.
+    ac_active      = 1;
+    ac_start       = pstart;
+    memcpy(ac_prefix, prefix, plen);
+    ac_prefix[plen] = '\0';
+    ac_prefix_len  = plen;
+    ac_idx         = found;
+    ac_has_parens  = has_parens;
+    ac_old_ins_len = ins_len;
+}
+
 static int settings_sel[5] = { 0, 0, 0, 0, 0 }; // [0]=number fmt, [1]=decimal, [2]=angle, [3]=graph type, [4]=input mode(0=STD,1=RPN)
 
 // ── Expression evaluator ──────────────────────────────────────────────────────
@@ -1270,8 +1392,10 @@ int main() {
                 apps_nav(c == KEY_UP ? -1 : 1);
             } else {
                 lcd_cursor_off();
-                if (screen_mode == SCREEN_HOME)
+                if (screen_mode == SCREEN_HOME) {
+                    ac_active = 0;
                     history_navigate(c == KEY_UP ? 1 : -1);
+                }
                 else if (screen_mode == SCREEN_EQUATIONS)
                     eq_nav_vertical(c == KEY_UP ? -1 : 1);
                 cursor_on();
@@ -1286,6 +1410,7 @@ int main() {
             } else {
                 lcd_cursor_off();
                 if (screen_mode == SCREEN_HOME) {
+                    ac_active = 0;
                     if      (c == KEY_LEFT)  input_move_left();
                     else if (c == KEY_RIGHT) input_move_right();
                     else if (c == KEY_HOME)  input_home();
@@ -1314,8 +1439,16 @@ int main() {
         } else if (c == KEY_DEL) {
             if (screen_mode != SCREEN_SETTINGS) {
                 lcd_cursor_off();
-                if (screen_mode == SCREEN_HOME)       input_delete();
+                if (screen_mode == SCREEN_HOME) { ac_active = 0; input_delete(); }
                 else if (screen_mode == SCREEN_EQUATIONS) eq_delete();
+                cursor_on();
+                cursor_state = 1;
+                last_blink = time_us_64();
+            }
+        } else if (c == KEY_TAB) {
+            if (screen_mode == SCREEN_HOME) {
+                lcd_cursor_off();
+                do_autocomplete();
                 cursor_on();
                 cursor_state = 1;
                 last_blink = time_us_64();
@@ -1339,6 +1472,7 @@ int main() {
                 if (c == 3 || c == 24) {
                     // Copy the whole current line/equation to clipboard
                     if (screen_mode == SCREEN_HOME) {
+                        ac_active = 0;
                         clipboard_len = line_len;
                         memcpy(clipboard, line_buf, line_len);
                     } else if (screen_mode == SCREEN_EQUATIONS) {
@@ -1360,15 +1494,16 @@ int main() {
                     if (clipboard_len > 0) {
                         if (screen_mode == SCREEN_HOME) {
                             history_pos = -1;
+                            ac_active = 0;
                             input_insert_str(clipboard, clipboard_len);
                         } else if (screen_mode == SCREEN_EQUATIONS) {
                             eq_insert_str(clipboard, clipboard_len);
                         }
                     }
                 } else if (screen_mode == SCREEN_HOME) {
-                    if      (c == '\b')              { history_pos = -1; input_backspace(); }
-                    else if (c == '\r' || c == '\n') input_newline();
-                    else                             { history_pos = -1; input_insert((char)c); }
+                    if      (c == '\b')              { history_pos = -1; ac_active = 0; input_backspace(); }
+                    else if (c == '\r' || c == '\n') { ac_active = 0; input_newline(); }
+                    else                             { history_pos = -1; ac_active = 0; input_insert((char)c); }
                 } else if (screen_mode == SCREEN_EQUATIONS) {
                     if      (c == '\b') eq_backspace();
                     else if (c == '\r' || c == '\n') { /* enter: no-op for now */ }
