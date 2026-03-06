@@ -16,9 +16,8 @@ A PicoCalc-based command line calculator firmware
 | log, ln, exp, abs, floor, ceil, round, sign | Other | TBD |
 
 ## TODO
-- Reverse Polish Notation (and standard in settings)
 - battery level
+- resistor app
 - polish graph screen
 - advanced graph/table/calculation tools
-- resistor app
 - file management

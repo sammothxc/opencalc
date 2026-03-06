@@ -210,7 +210,7 @@ static void eq_insert_str(const char *s, int len) {
     eq_goto(eq_cpos[eq_sel]);
 }
 
-static int settings_sel[4] = { 0, 0, 0, 0 }; // [0]=number fmt, [1]=decimal, [2]=angle(0=RAD,1=DEG), [3]=graph type
+static int settings_sel[5] = { 0, 0, 0, 0, 0 }; // [0]=number fmt, [1]=decimal, [2]=angle, [3]=graph type, [4]=input mode(0=STD,1=RPN)
 
 // ── Expression evaluator ──────────────────────────────────────────────────────
 static double complex ans     = 0.0;  // last computed answer
@@ -358,19 +358,23 @@ static void draw_toolbar(void) {
     lcd_set_fg_colour(GREEN);
     lcd_set_xy(0, 0);
     lcd_print_string("OpenCalc v" APP_VERSION);
-    // RAD/DEG indicator — right-aligned, yellow
-    const char *angle_label = (settings_sel[2] == 0) ? "RAD" : "DEG";
-    int label_len = (int)strlen(angle_label);
+    // Right-aligned indicators in settings row order: RAD/DEG  FUNC  STD/RPN
     lcd_set_fg_colour(YELLOW);
     lcd_set_bg_colour(BLACK);
-    lcd_set_xy((ncols - label_len) * fw, 0);
-    lcd_print_string((char *)angle_label);
-    // FUNC/PARA/POL/SEQ indicator — left of RAD/DEG, yellow
     static const char * const graph_labels[] = { "FUNC", "PARA", "POL", "SEQ" };
+    const char *angle_label = (settings_sel[2] == 0) ? "RAD" : "DEG";
     const char *graph_label = graph_labels[settings_sel[3]];
+    const char *rpn_label   = (settings_sel[4] == 0) ? "STD" : "RPN";
+    int rpn_len   = (int)strlen(rpn_label);
     int graph_len = (int)strlen(graph_label);
-    lcd_set_xy((ncols - label_len - 1 - graph_len) * fw, 0);
+    int angle_len = (int)strlen(angle_label);
+    // STD/RPN rightmost, FUNC middle, RAD/DEG leftmost
+    lcd_set_xy((ncols - rpn_len) * fw, 0);
+    lcd_print_string((char *)rpn_label);
+    lcd_set_xy((ncols - rpn_len - 1 - graph_len) * fw, 0);
     lcd_print_string((char *)graph_label);
+    lcd_set_xy((ncols - rpn_len - 1 - graph_len - 1 - angle_len) * fw, 0);
+    lcd_print_string((char *)angle_label);
     lcd_fill_rect(0, fh, ncols * fw - 1, fh + 1, GREEN);
     lcd_set_fg_colour(WHITE);
 }
@@ -595,30 +599,30 @@ static void enter_graph(void) {
 
 // ── Settings persistence (last flash sector) ──────────────────────────────────
 #define SETTINGS_FLASH_OFFSET (PICO_FLASH_SIZE_BYTES - FLASH_SECTOR_SIZE)
-#define SETTINGS_MAGIC        0x4F43534C   // "LCSO"
+#define SETTINGS_MAGIC        0x4F43534D   // bump version when struct changes
 
 typedef struct {
     uint32_t magic;
-    int      sel[4];
+    int      sel[5];
 } settings_data_t;
 
-static void settings_save(const int sel[4]) {
+static void settings_save(const int sel[5]) {
     uint8_t buf[FLASH_PAGE_SIZE];
     memset(buf, 0xff, sizeof(buf));
     settings_data_t *d = (settings_data_t *)buf;
     d->magic = SETTINGS_MAGIC;
-    memcpy(d->sel, sel, 4 * sizeof(int));
+    memcpy(d->sel, sel, 5 * sizeof(int));
     uint32_t ints = save_and_disable_interrupts();
     flash_range_erase(SETTINGS_FLASH_OFFSET, FLASH_SECTOR_SIZE);
     flash_range_program(SETTINGS_FLASH_OFFSET, buf, FLASH_PAGE_SIZE);
     restore_interrupts(ints);
 }
 
-static void settings_load(int sel[4]) {
+static void settings_load(int sel[5]) {
     const settings_data_t *d =
         (const settings_data_t *)(XIP_BASE + SETTINGS_FLASH_OFFSET);
     if (d->magic == SETTINGS_MAGIC)
-        memcpy(sel, d->sel, 4 * sizeof(int));
+        memcpy(sel, d->sel, 5 * sizeof(int));
 }
 
 // ── Settings screen ───────────────────────────────────────────────────────────
@@ -626,8 +630,9 @@ static const char * const srow0[] = { "Normal", "Sci", "Eng" };
 static const char * const srow1[] = { "Float","0","1","2","3","4","5","6","7","8","9" };
 static const char * const srow2[] = { "Radian", "Degree" };
 static const char * const srow3[] = { "Function", "Parametric", "Polar", "Seq" };
-static const char * const *settings_rows[] = { srow0, srow1, srow2, srow3 };
-static const int settings_row_count[] = { 3, 11, 2, 4 };
+static const char * const srow4[] = { "Standard", "Reverse Polish Notation" };
+static const char * const *settings_rows[] = { srow0, srow1, srow2, srow3, srow4 };
+static const int settings_row_count[] = { 3, 11, 2, 4, 2 };
 
 static int settings_row = 0;
 static int settings_col = 0;
@@ -687,7 +692,7 @@ static void settings_nav(int drow, int dcol) {
     settings_cursor_draw(0);
     if (drow != 0) {
         int nr = settings_row + drow;
-        if (nr < 0 || nr >= 4) { settings_cursor_draw(1); return; }
+        if (nr < 0 || nr >= 5) { settings_cursor_draw(1); return; }
         settings_row = nr;
         if (settings_col >= settings_row_count[settings_row])
             settings_col = settings_row_count[settings_row] - 1;
@@ -701,7 +706,7 @@ static void settings_nav(int drow, int dcol) {
 
 static void draw_settings_screen(void) {
     lcd_clear_content();
-    for (int r = 0; r < 4; r++)
+    for (int r = 0; r < 5; r++)
         for (int c = 0; c < settings_row_count[r]; c++)
             settings_draw_opt(r, c);
     lcd_set_bg_colour(BLACK);
@@ -844,6 +849,95 @@ static void format_result(char *out, int out_sz, double complex val) {
         snprintf(out, out_sz, "%s-%si", re_s, im_s);
 }
 
+// ── RPN (postfix) evaluator ───────────────────────────────────────────────────
+#define RPN_STACK_MAX 32
+
+static int rpn_push(double complex *stack, int *sp, double complex v) {
+    if (*sp >= RPN_STACK_MAX) return 0;
+    stack[(*sp)++] = v;
+    return 1;
+}
+
+static int exec_rpn(const char *buf) {
+    double complex stack[RPN_STACK_MAX];
+    int sp = 0;
+    const char *p = buf;
+
+    while (*p) {
+        while (*p == ' ') p++;
+        if (!*p) break;
+
+        char tok[32];
+        int tlen = 0;
+        while (*p && *p != ' ' && tlen < 31) tok[tlen++] = *p++;
+        tok[tlen] = '\0';
+
+        // Number literal
+        char *endp;
+        double val = strtod(tok, &endp);
+        if (endp != tok && *endp == '\0') {
+            if (!rpn_push(stack, &sp, val)) return 0;
+            continue;
+        }
+
+        // Named constants / ans / variables
+        if (!strcmp(tok, "pi"))  { if (!rpn_push(stack, &sp, M_PI)) return 0; continue; }
+        if (!strcmp(tok, "e"))   { if (!rpn_push(stack, &sp, M_E))  return 0; continue; }
+        if (!strcmp(tok, "i"))   { if (!rpn_push(stack, &sp, I))    return 0; continue; }
+        if (!strcmp(tok, "ans")) { if (!rpn_push(stack, &sp, ans))  return 0; continue; }
+        if (tlen == 1 && tok[0] >= 'a' && tok[0] <= 'z') {
+            if (!rpn_push(stack, &sp, vars[(unsigned char)tok[0] - 'a'])) return 0;
+            continue;
+        }
+
+        // Binary operators
+        if (tlen == 1 && sp >= 2) {
+            double complex b = stack[--sp], a = stack[--sp];
+            double complex r;
+            int ok = 1;
+            switch (tok[0]) {
+                case '+': r = a + b; break;
+                case '-': r = a - b; break;
+                case '*': r = a * b; break;
+                case '/': if (cabs(b) == 0.0) return 0; r = a / b; break;
+                case '^': r = cpow(a, b); break;
+                default: ok = 0;
+            }
+            if (ok) { stack[sp++] = r; continue; }
+            // not a binary op, fall through
+            stack[sp++] = a; stack[sp++] = b;
+        }
+
+        // Unary operators / functions
+        if (!strcmp(tok, "neg"))  { if (sp < 1) return 0; stack[sp-1] = -stack[sp-1]; continue; }
+        if (!strcmp(tok, "abs"))  { if (sp < 1) return 0; stack[sp-1] = cabs(stack[sp-1]); continue; }
+        if (!strcmp(tok, "sqrt")) { if (sp < 1) return 0; stack[sp-1] = csqrt(stack[sp-1]); continue; }
+        if (!strcmp(tok, "cbrt")) { if (sp < 1) return 0; stack[sp-1] = cpow(stack[sp-1], 1.0/3.0); continue; }
+        if (!strcmp(tok, "sin"))  { if (sp < 1) return 0; stack[sp-1] = csin(stack[sp-1]); continue; }
+        if (!strcmp(tok, "cos"))  { if (sp < 1) return 0; stack[sp-1] = ccos(stack[sp-1]); continue; }
+        if (!strcmp(tok, "tan"))  { if (sp < 1) return 0; stack[sp-1] = ctan(stack[sp-1]); continue; }
+        if (!strcmp(tok, "asin")) { if (sp < 1) return 0; stack[sp-1] = casin(stack[sp-1]); continue; }
+        if (!strcmp(tok, "acos")) { if (sp < 1) return 0; stack[sp-1] = cacos(stack[sp-1]); continue; }
+        if (!strcmp(tok, "atan")) { if (sp < 1) return 0; stack[sp-1] = catan(stack[sp-1]); continue; }
+        if (!strcmp(tok, "sinh")) { if (sp < 1) return 0; stack[sp-1] = csinh(stack[sp-1]); continue; }
+        if (!strcmp(tok, "cosh")) { if (sp < 1) return 0; stack[sp-1] = ccosh(stack[sp-1]); continue; }
+        if (!strcmp(tok, "tanh")) { if (sp < 1) return 0; stack[sp-1] = ctanh(stack[sp-1]); continue; }
+        if (!strcmp(tok, "log"))  { if (sp < 1) return 0; stack[sp-1] = clog(stack[sp-1]) / log(10.0); continue; }
+        if (!strcmp(tok, "ln"))   { if (sp < 1) return 0; stack[sp-1] = clog(stack[sp-1]); continue; }
+        if (!strcmp(tok, "exp"))  { if (sp < 1) return 0; stack[sp-1] = cexp(stack[sp-1]); continue; }
+
+        // Unknown token
+        return 0;
+    }
+
+    if (sp != 1) return 0;
+    ans = stack[0];
+    char out[64];
+    format_result(out, sizeof(out), stack[0]);
+    print_right(out);
+    return 1;
+}
+
 static void exec_command(const char *cmd, int len) {
     while (len > 0 && cmd[len - 1] == ' ') len--;
     if (len == 0) return;
@@ -883,6 +977,12 @@ static void exec_command(const char *cmd, int len) {
         } else {
             print_right("?");
         }
+        return;
+    }
+
+    if (settings_sel[4] == 1) {
+        // RPN mode: postfix evaluation
+        if (!exec_rpn(buf)) print_right("?");
         return;
     }
 
