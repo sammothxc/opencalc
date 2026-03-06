@@ -16,8 +16,6 @@ A PicoCalc-based command line calculator firmware
 | log, ln, exp, abs, floor, ceil, round, sign | Other | TBD |
 
 ## TODO
-- fix scrolling
-- fix cursor overwriting
 - Reverse Polish Notation (and standard in settings)
 - battery level
 - polish graph screen

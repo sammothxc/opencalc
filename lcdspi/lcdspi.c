@@ -777,7 +777,12 @@ static void cursor_rect(int colour) {
         }
     } else if (cursor_block_char == 0) {
         // Vertical bar cursor (2px wide, left edge of cell)
-        draw_rect_spi(x1, y1, x1 + 1, y2, colour);
+        if (colour != gui_bcolour) {
+            draw_rect_spi(x1, y1, x1 + 1, y2, colour);
+        } else {
+            // Erase: redraw the full character so left-edge pixels are restored
+            lcd_print_char(gui_fcolour, gui_bcolour, cursor_restore_char, 1 /* no advance */);
+        }
     } else if (colour != gui_bcolour) {
         // Block cursor ON: fill cell with fg colour, draw overlay char inverted
         draw_rect_spi(x1, y1, x2, y2, colour);
