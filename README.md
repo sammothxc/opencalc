@@ -20,4 +20,5 @@ A PicoCalc-based command line calculator firmware
 - battery level
 - polish graph screen
 - advanced graph/table/calculation tools
+- resistor app
 - file management

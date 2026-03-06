@@ -35,7 +35,7 @@ static int  caps_on = 0;
 static int  bottom_toolbar_y;
 
 // ── Screen modes ──────────────────────────────────────────────────────────────
-typedef enum { SCREEN_HOME, SCREEN_EQUATIONS, SCREEN_GRAPH, SCREEN_SETTINGS } screen_mode_t;
+typedef enum { SCREEN_HOME, SCREEN_EQUATIONS, SCREEN_GRAPH, SCREEN_SETTINGS, SCREEN_APPS } screen_mode_t;
 static screen_mode_t screen_mode = SCREEN_HOME;
 
 // ── Equations state ───────────────────────────────────────────────────────────
@@ -365,6 +365,12 @@ static void draw_toolbar(void) {
     lcd_set_bg_colour(BLACK);
     lcd_set_xy((ncols - label_len) * fw, 0);
     lcd_print_string((char *)angle_label);
+    // FUNC/PARA/POL/SEQ indicator — left of RAD/DEG, yellow
+    static const char * const graph_labels[] = { "FUNC", "PARA", "POL", "SEQ" };
+    const char *graph_label = graph_labels[settings_sel[3]];
+    int graph_len = (int)strlen(graph_label);
+    lcd_set_xy((ncols - label_len - 1 - graph_len) * fw, 0);
+    lcd_print_string((char *)graph_label);
     lcd_fill_rect(0, fh, ncols * fw - 1, fh + 1, GREEN);
     lcd_set_fg_colour(WHITE);
 }
@@ -377,6 +383,7 @@ static const char * const fn_labels[] = {
 static int active_toolbar_box(void) {
     if (screen_mode == SCREEN_EQUATIONS) return 0;
     if (screen_mode == SCREEN_GRAPH)     return 1;
+    if (screen_mode == SCREEN_APPS)      return 2;
     if (screen_mode == SCREEN_SETTINGS)  return 3;
     return -1;
 }
@@ -638,29 +645,23 @@ static int settings_opt_x(int row, int col) {
     return x;
 }
 
-// Draw one option cell (selected = YELLOW bg / BLACK text, else BLACK bg / WHITE text)
+// Draw one option cell (committed = GREEN text / BLACK bg, else WHITE text / BLACK bg)
 static void settings_draw_opt(int row, int col) {
     int y   = settings_row_y(row);
     int xt  = settings_opt_x(row, col);
     int optw = (int)strlen(settings_rows[row][col]) * fw;
     int x0 = xt - 2,  x1 = xt + optw + 1;
     int y0 = y - 1,   y1 = y + fh;
-    if (settings_sel[row] == col) {
-        lcd_fill_rect(x0, y0, x1, y1, YELLOW);
-        lcd_set_bg_colour(YELLOW);
-        lcd_set_fg_colour(BLACK);
-    } else {
-        lcd_fill_rect(x0, y0, x1, y1, BLACK);
-        lcd_set_bg_colour(BLACK);
-        lcd_set_fg_colour(WHITE);
-    }
+    lcd_fill_rect(x0, y0, x1, y1, BLACK);
+    lcd_set_bg_colour(BLACK);
+    lcd_set_fg_colour(settings_sel[row] == col ? GREEN : WHITE);
     lcd_set_xy(xt, y);
     lcd_print_string((char *)settings_rows[row][col]);
     lcd_set_bg_colour(BLACK);
     lcd_set_fg_colour(WHITE);
 }
 
-// Draw (visible=1) or erase (visible=0) the blinking box cursor.
+// Draw (visible=1) or erase (visible=0) the YELLOW highlight cursor.
 static void settings_cursor_draw(int visible) {
     int row = settings_row, col = settings_col;
     int y   = settings_row_y(row);
@@ -669,12 +670,15 @@ static void settings_cursor_draw(int visible) {
     int x0 = xt - 2,  x1 = xt + optw + 1;
     int y0 = y - 1,   y1 = y + fh;
     if (visible) {
-        lcd_fill_rect(x0, y0, x1, y0, WHITE);   // top
-        lcd_fill_rect(x0, y1, x1, y1, WHITE);   // bottom
-        lcd_fill_rect(x0, y0, x0, y1, WHITE);   // left
-        lcd_fill_rect(x1, y0, x1, y1, WHITE);   // right
+        lcd_fill_rect(x0, y0, x1, y1, YELLOW);
+        lcd_set_bg_colour(YELLOW);
+        lcd_set_fg_colour(BLACK);
+        lcd_set_xy(xt, y);
+        lcd_print_string((char *)settings_rows[row][col]);
+        lcd_set_bg_colour(BLACK);
+        lcd_set_fg_colour(WHITE);
     } else {
-        settings_draw_opt(row, col);             // repaint cell without outline
+        settings_draw_opt(row, col);             // repaint cell without highlight
     }
 }
 
@@ -710,6 +714,50 @@ static void enter_settings(void) {
     draw_settings_screen();
     draw_bottom_toolbar();
     settings_cursor_draw(1);
+}
+
+// ── Apps screen ───────────────────────────────────────────────────────────────
+static const char * const app_names[] = { "TestApp1", "TestApp2", "TestApp3" };
+#define APP_COUNT 3
+static int apps_sel = 0;
+
+static void apps_draw_row(int i) {
+    int y = (fh + 2) + fh + i * (fh * 2);
+    int is_sel = (i == apps_sel);
+    int x0 = fw * 2;
+    int x1 = x0 + (int)strlen(app_names[i]) * fw - 1;
+    // Clear the full row to background first, then draw highlight only around the name
+    lcd_fill_rect(0, y - 1, scr_w - 1, y + fh, BLACK);
+    if (is_sel) lcd_fill_rect(x0 - 2, y - 1, x1 + 2, y + fh, YELLOW);
+    lcd_set_fg_colour(is_sel ? BLACK : WHITE);
+    lcd_set_bg_colour(is_sel ? YELLOW : BLACK);
+    lcd_set_xy(x0, y);
+    lcd_print_string((char *)app_names[i]);
+    lcd_set_fg_colour(WHITE);
+    lcd_set_bg_colour(BLACK);
+}
+
+static void draw_apps_screen(void) {
+    lcd_clear_content();
+    for (int i = 0; i < APP_COUNT; i++)
+        apps_draw_row(i);
+}
+
+static void enter_apps(void) {
+    screen_mode = SCREEN_APPS;
+    lcd_cursor_off();
+    draw_apps_screen();
+    draw_bottom_toolbar();
+}
+
+static void apps_nav(int dir) {
+    int old = apps_sel;
+    apps_sel += dir;
+    if (apps_sel < 0) apps_sel = 0;
+    if (apps_sel >= APP_COUNT) apps_sel = APP_COUNT - 1;
+    if (apps_sel == old) return;
+    apps_draw_row(old);
+    apps_draw_row(apps_sel);
 }
 
 // ── CLI ───────────────────────────────────────────────────────────────────────
@@ -924,8 +972,8 @@ int main() {
 
     while (1) {
         if (time_us_64() - last_blink >= 500000) {  // 500ms blink
-            if (screen_mode == SCREEN_SETTINGS) {
-                // no blink on settings screen
+            if (screen_mode == SCREEN_SETTINGS || screen_mode == SCREEN_APPS) {
+                // no blink on these screens
             } else if (screen_mode != SCREEN_GRAPH) {
                 if (cursor_state) lcd_cursor_off();
                 else              cursor_on();
@@ -951,6 +999,11 @@ int main() {
             else enter_graph();
             cursor_state = 1;
             last_blink = time_us_64();
+        } else if (c == KEY_F3) {
+            if (screen_mode == SCREEN_APPS) enter_home();
+            else enter_apps();
+            cursor_state = 1;
+            last_blink = time_us_64();
         } else if (c == KEY_F4) {
             if (screen_mode == SCREEN_SETTINGS) enter_home();
             else enter_settings();
@@ -959,6 +1012,8 @@ int main() {
         } else if (c == KEY_UP || c == KEY_DOWN) {
             if (screen_mode == SCREEN_SETTINGS) {
                 settings_nav(c == KEY_UP ? -1 : 1, 0);
+            } else if (screen_mode == SCREEN_APPS) {
+                apps_nav(c == KEY_UP ? -1 : 1);
             } else {
                 lcd_cursor_off();
                 if (screen_mode == SCREEN_HOME)
