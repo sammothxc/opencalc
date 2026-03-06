@@ -393,9 +393,16 @@ static void draw_toolbar(void) {
     lcd_set_fg_colour(YELLOW);
     lcd_set_bg_colour(BLACK);
     if (alt_held) {
-        const char *bat = "100%";
+        char bat[24];
+        int raw = read_battery();
+        int pct = (raw >> 8) & 0x7F;
+        int charging = (raw >> 8) & 0x80;
+        if (charging)
+            snprintf(bat, sizeof(bat), "Charging, %d%%", pct);
+        else
+            snprintf(bat, sizeof(bat), "%d%%", pct);
         lcd_set_xy((ncols - (int)strlen(bat)) * fw, 0);
-        lcd_print_string((char *)bat);
+        lcd_print_string(bat);
     } else {
         // Indicators in settings row order: RAD/DEG  FUNC  STD/RPN
         static const char * const graph_labels[] = { "FUNC", "PARA", "POL", "SEQ" };
@@ -1051,7 +1058,9 @@ static void exec_command(const char *cmd, int len) {
         return;
     }
     if (strcmp(buf, "bat") == 0) {
-        print_right("100%");
+        char bat[16];
+        snprintf(bat, sizeof(bat), "%d", read_battery());
+        print_right(bat);
         return;
     }
     if (strcmp(buf, "ver") == 0) {
