@@ -223,8 +223,9 @@ static const ac_entry_t ac_table[] = {
     { "asin",  1 }, { "asinh", 1 }, { "atan",  1 }, { "atanh", 1 },
     { "bat",   0 }, { "bin",   1 }, { "cbrt",  1 }, { "ceil",  1 }, { "cle",   0 }, { "cls",   0 },
     { "cos",   1 }, { "cosh",  1 }, { "cot",   1 }, { "coth",  1 }, { "csc",   1 },
-    { "csch",  1 }, { "exp",   1 }, { "floor", 1 }, { "hex",   1 }, { "ln",    1 }, { "log",   1 },
-    { "name",  1 }, { "neg",   0 }, { "not",   1 }, { "oct",   1 }, { "or",    1 },
+    { "csch",  1 }, { "exp",   1 }, { "floor", 1 }, { "frac",  1 }, { "hex",   1 }, { "if",    1 }, { "input", 1 },
+    { "ln",    1 }, { "log",   1 },
+    { "name",  1 }, { "neg",   0 }, { "not",   1 }, { "oct",   1 }, { "or",    1 }, { "print", 1 },
     { "resistor", 1 }, { "round", 1 }, { "sec",   1 }, { "sech",  1 },
     { "shl",   1 }, { "shr",   1 }, { "sign",  1 }, { "sin",   1 }, { "sinh",  1 },
     { "sqrt",  1 }, { "tan",   1 }, { "tanh",  1 }, { "ver",   0 }, { "xor",   1 },
@@ -240,9 +241,9 @@ static const hint_entry_t hint_table[] = {
     { "bin",      "n" }, { "cbrt",   "n" }, { "ceil",   "n" },
     { "cos",      "n" }, { "cosh",   "n" }, { "cot",    "n" },
     { "coth",     "n" }, { "csc",    "n" }, { "csch",   "n" },
-    { "exp",      "n" }, { "floor",  "n" }, { "hex",    "n" },
+    { "exp",      "n" }, { "floor",  "n" }, { "frac",   "n" }, { "hex",    "n" }, { "if",     "cond,then,else" }, { "input",  "var" },
     { "ln",       "n" }, { "log",    "n" },
-    { "name",     "label" }, { "not",    "n,[bits]" }, { "oct",    "n" }, { "or",     "a,b" },
+    { "name",     "label" }, { "not",    "n,[bits]" }, { "oct",    "n" }, { "or",     "a,b" }, { "print",  "text" },
     { "resistor", "c1,c2,c3,c4,[c5]" },
     { "round",    "n" },
     { "sec",      "n" }, { "sech",   "n" }, { "shl",    "n,bits" }, { "shr",    "n,bits" },
@@ -419,6 +420,20 @@ typedef struct { const char *p; int err; } Parser;
 
 static void ps_skip(Parser *ps) { while (*ps->p == ' ') ps->p++; }
 
+// Advance past one expression without evaluating it (for lazy if-branch skipping).
+// Stops at a ',' or ')' at paren depth 0.
+static void ps_skip_expr(Parser *ps) {
+    int depth = 0;
+    while (*ps->p) {
+        char c = *ps->p;
+        if (c == '(') { depth++; ps->p++; }
+        else if (c == ')') { if (depth == 0) break; depth--; ps->p++; }
+        else if (c == ',' && depth == 0) break;
+        else ps->p++;
+    }
+}
+
+static double complex parse_comparison(Parser *ps);
 static double complex parse_expr(Parser *ps);
 static int eval_expr(const char *s, double complex *out); // forward decl
 
@@ -426,7 +441,7 @@ static double complex parse_primary(Parser *ps) {
     ps_skip(ps);
     if (*ps->p == '(') {
         ps->p++;
-        double complex v = parse_expr(ps);
+        double complex v = parse_comparison(ps);
         ps_skip(ps);
         if (*ps->p == ')') ps->p++; else ps->err = 1;
         return v;
@@ -464,14 +479,37 @@ static double complex parse_primary(Parser *ps) {
         ps_skip(ps);
         if (*ps->p != '(') { ps->err = 1; return 0; }
         ps->p++;
+        // if(cond, then, else) — lazy: only evaluates the taken branch
+        if (!strcmp(name, "if")) {
+            double complex cond = parse_comparison(ps);
+            ps_skip(ps);
+            if (*ps->p == ',') ps->p++; else { ps->err = 1; return 0; }
+            if (creal(cond) != 0.0) {
+                double complex result = parse_comparison(ps);
+                ps_skip(ps);
+                if (*ps->p == ',') ps->p++; else { ps->err = 1; return 0; }
+                ps_skip_expr(ps);
+                ps_skip(ps);
+                if (*ps->p == ')') ps->p++; else ps->err = 1;
+                return result;
+            } else {
+                ps_skip_expr(ps);
+                ps_skip(ps);
+                if (*ps->p == ',') ps->p++; else { ps->err = 1; return 0; }
+                double complex result = parse_comparison(ps);
+                ps_skip(ps);
+                if (*ps->p == ')') ps->p++; else ps->err = 1;
+                return result;
+            }
+        }
         // not(n) or not(n, bits) — bitwise NOT with optional bit width (default 32)
         if (!strcmp(name, "not")) {
-            double complex a = parse_expr(ps);
+            double complex a = parse_comparison(ps);
             ps_skip(ps);
             int bits = 32;
             if (*ps->p == ',') {
                 ps->p++;
-                double complex b = parse_expr(ps);
+                double complex b = parse_comparison(ps);
                 ps_skip(ps);
                 bits = (int)llround(creal(b));
                 if (bits < 1 || bits > 64) bits = 32;
@@ -484,7 +522,7 @@ static double complex parse_primary(Parser *ps) {
         // Two-argument bitwise/shift functions
         if (!strcmp(name, "and") || !strcmp(name, "or") || !strcmp(name, "xor") ||
                 !strcmp(name, "shl") || !strcmp(name, "shr")) {
-            double complex a = parse_expr(ps);
+            double complex a = parse_comparison(ps);
             ps_skip(ps);
             if (*ps->p == ',') ps->p++; else ps->err = 1;
             double complex b = parse_expr(ps);
@@ -499,7 +537,7 @@ static double complex parse_primary(Parser *ps) {
             if (!strcmp(name, "shl")) return (double)(ia << (ib & 63));
             if (!strcmp(name, "shr")) return (double)((uint64_t)ia >> (ib & 63));
         }
-        double complex a = parse_expr(ps);
+        double complex a = parse_comparison(ps);
         ps_skip(ps);
         if (*ps->p == ')') ps->p++; else ps->err = 1;
         if (ps->err) return 0;
@@ -618,9 +656,33 @@ static double complex parse_expr(Parser *ps) {
     return v;
 }
 
+// Comparison operators (lowest precedence): < > <= >= = ~
+// Returns 1.0 (true) or 0.0 (false). Single '=' means equality.
+// '~' means not-equal (maps to the ~ key on the keypad).
+static double complex parse_comparison(Parser *ps) {
+    double complex L = parse_expr(ps);
+    if (ps->err) return 0;
+    ps_skip(ps);
+    char c = *ps->p;
+    if (c == '<' || c == '>' || c == '=' || c == '~') {
+        int op = c; ps->p++;
+        // Two-character operators: <= >=
+        if ((op == '<' || op == '>') && *ps->p == '=') { op = (op == '<') ? -1 : -2; ps->p++; }
+        double complex R = parse_expr(ps);
+        double l = creal(L), r = creal(R);
+        if (op == '<')  return l <  r ? 1.0 : 0.0;
+        if (op == '>')  return l >  r ? 1.0 : 0.0;
+        if (op == -1)   return l <= r ? 1.0 : 0.0;  // <=
+        if (op == -2)   return l >= r ? 1.0 : 0.0;  // >=
+        if (op == '=')  return l == r ? 1.0 : 0.0;
+        if (op == '~')  return l != r ? 1.0 : 0.0;
+    }
+    return L;
+}
+
 static int eval_expr(const char *s, double complex *out) {
     Parser ps = { s, 0 };
-    *out = parse_expr(&ps);
+    *out = parse_comparison(&ps);
     ps_skip(&ps);
     if (ps.err || *ps.p != '\0') return 0;
     return 1;
@@ -1437,6 +1499,111 @@ static void exec_command(const char *cmd, int len) {
         settings_save(settings_sel);
         draw_toolbar();
         print_ok("ok");
+        return;
+    }
+
+    if (strncmp(buf, "frac(", 5) == 0 && buf[len - 1] == ')') {
+        char inner[LINE_BUF_MAX];
+        int ilen = len - 6;
+        if (ilen < 0) ilen = 0;
+        memcpy(inner, buf + 5, ilen);
+        inner[ilen] = '\0';
+        double complex val = 0;
+        if (!eval_expr(inner, &val)) { print_err("?"); return; }
+        double x = creal(val);
+
+        // Continued fraction convergent algorithm
+        int neg = x < 0;
+        double ax = fabs(x);
+        long long h0 = 1, h1 = (long long)ax;
+        long long k0 = 0, k1 = 1;
+        double rem = ax - (double)h1;
+        for (int i = 0; i < 30 && rem > 1e-10; i++) {
+            double r = 1.0 / rem;
+            long long a = (long long)r;
+            long long h2 = a * h1 + h0;
+            long long k2 = a * k1 + k0;
+            if (k2 > 9999) break;
+            h0 = h1; h1 = h2;
+            k0 = k1; k1 = k2;
+            rem = r - (double)a;
+        }
+        long long p = neg ? -h1 : h1;
+        long long q = k1;
+
+        char out[32];
+        if (q == 1) snprintf(out, sizeof(out), "%lld", p);
+        else        snprintf(out, sizeof(out), "%lld/%lld", p, q);
+        print_right(out);
+        return;
+    }
+
+    if (strncmp(buf, "input(", 6) == 0 && buf[len - 1] == ')') {
+        int vlen = len - 7;
+        if (vlen != 1 || !isalpha((unsigned char)buf[6])) { print_err("bad var"); return; }
+        int vi = tolower((unsigned char)buf[6]) - 'a';
+
+        // Print prompt "x? "
+        char prompt[5] = { (char)tolower((unsigned char)buf[6]), '?', ' ', '\0' };
+        lcd_set_fg_colour(WHITE);
+        lcd_set_bg_colour(BLACK);
+        lcd_print_string(prompt);
+        lcd_cursor_on();
+
+        // Blocking input loop
+        char ibuf[LINE_BUF_MAX];
+        int ilen = 0;
+        for (;;) {
+            int c = read_i2c_kbd();
+            if (c == -1 || c == KEY_MOD_CHANGED) { sleep_ms(5); continue; }
+            if (c == '\r' || c == '\n') break;
+            if (c == KEY_REBOOT)        { lcd_cursor_off(); print_err("cancel"); return; }
+            if (c == '\b') {
+                if (ilen > 0) { ilen--; lcd_cursor_off(); lcd_putc(0, '\b'); lcd_cursor_on(); }
+            } else if (c > 0 && c < 128 && ilen < LINE_BUF_MAX - 1) {
+                ibuf[ilen++] = (char)c;
+                lcd_cursor_off();
+                lcd_putc(0, (uint8_t)c);
+                lcd_cursor_on();
+            }
+        }
+        ibuf[ilen] = '\0';
+        lcd_cursor_off();
+        lcd_putc(0, '\n');
+
+        if (ilen == 0) { print_err("cancel"); return; }
+        double complex val = 0;
+        if (!eval_expr(ibuf, &val)) { print_err("?"); return; }
+        vars[vi] = val;
+        var_expr[vi][0] = '\0';
+        // Show the stored value as confirmation
+        char out[32];
+        format_result(out, sizeof(out), val);
+        print_right(out);
+        return;
+    }
+
+    if (strncmp(buf, "print(", 6) == 0 && buf[len - 1] == ')') {
+        int ilen = len - 7;
+        if (ilen < 0) ilen = 0;
+        char inner[LINE_BUF_MAX];
+        memcpy(inner, buf + 6, ilen);
+        inner[ilen] = '\0';
+        lcd_set_fg_colour(WHITE);
+        lcd_set_bg_colour(BLACK);
+        if (ilen >= 2 && inner[0] == '"' && inner[ilen - 1] == '"') {
+            // Quoted string literal: strip quotes and print as-is
+            inner[ilen - 1] = '\0';
+            lcd_print_string(inner + 1);
+        } else {
+            // Expression: evaluate and print formatted result
+            double complex val = 0;
+            if (!eval_expr(inner, &val)) { print_err("?"); return; }
+            char out[32];
+            format_result(out, sizeof(out), val);
+            lcd_print_string(out);
+        }
+        lcd_putc(0, '\n');
         return;
     }
 

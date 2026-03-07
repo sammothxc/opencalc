@@ -26,8 +26,10 @@
 | e | Euler's number, 2.718281828 | `2e` | `5.436563657` |
 | exp | Returns the inverse of natural logarithm | `exp(1)` | `2.718281828` |
 | floor | Rounds down to the nearest integer | `floor(4.1)` or `floor(4.9)` | `4` |
+| frac | Returns simplified fraction | `frac(0.333)` or `frac(111/333)` | `1/3` |
 | hex | Returns as hexadecimal | `hex(255)` | `0xFF` |
 | i | Imaginary unit, sqrt(-1) | `i^2+2i` | `-1+2i` |
+| if | If/then/else evaluator (`~` for not-equal to) | `x=-13` then `if(x>0, print(above zero), print(below zero))` | `below zero` |
 | ln | Returns the natural logarithm | `ln(e)` | `1` |
 | log | Returns the log base 10 of the input | `log(1000)` | `3` |
 | name | Returns the current calculator name | `name` | `MyCalc` |
@@ -37,6 +39,7 @@
 | oct | Returns as octal | `oct(255)` | `0o377` |
 | or | OR bitwise operation | `or(0b1010,0b0101)` | `15` |
 | pi | Pi, 3.141592654 | `2pi` | `6.283185307` |
+| print | Returns input | `x=HelloWorld` then `print(x)` or `print("HelloWorld")` | `HelloWorld` |
 | resistor | Returns the value of a resistor, or the colors for a specific value | `resistor(bla,bla,red,bro)` or `resistor(10000)` | `10000` or `bla,bla,red,bro` |
 | round | Rounds to the nearest integer | `round(4.6)` or `round(5.4)` | `5` |
 | shl | Shift left bitwise operation | `shl(1,8)` | `256` |

@@ -18,9 +18,11 @@
 
 ## TODO
 - help function (F10)
-- file management commands
+- equation stuff (simplify, solve, factor)
+- file management
+- text editor
+- micropython
 - advanced graph/table/calculation tools
 - resistor app
 - user manual app (searchable)
-- file management app
-- part lookup app
+- part lookup
