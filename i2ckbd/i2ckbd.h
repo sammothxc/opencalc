@@ -34,9 +34,6 @@
 #define KEY_F7           (-20)
 #define KEY_F8           (-21)
 #define KEY_F9           (-22)
-#define KEY_F7           (-19)
-#define KEY_F8           (-20)
-#define KEY_F9           (-21)
 
 #define MOD_SHIFT  0x01
 #define MOD_ALT    0x02

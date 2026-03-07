@@ -230,6 +230,32 @@ static const ac_entry_t ac_table[] = {
 };
 #define AC_COUNT ((int)(sizeof(ac_table)/sizeof(ac_table[0])))
 
+typedef struct { const char *name; const char *hint; } hint_entry_t;
+static const hint_entry_t hint_table[] = {
+    { "abs",      "x" },
+    { "acos",     "x" }, { "acosh",  "x" }, { "acot",   "x" }, { "acoth",  "x" },
+    { "acsc",     "x" }, { "acsch",  "x" }, { "asec",   "x" }, { "asech",  "x" },
+    { "asin",     "x" }, { "asinh",  "x" }, { "atan",   "x" }, { "atanh",  "x" },
+    { "cbrt",     "x" }, { "ceil",   "x" },
+    { "cos",      "x" }, { "cosh",   "x" }, { "cot",    "x" }, { "coth",   "x" },
+    { "csc",      "x" }, { "csch",   "x" },
+    { "exp",      "x" }, { "floor",  "x" },
+    { "ln",       "x" }, { "log",    "x" },
+    { "name",     "label" },
+    { "resistor", "color1,color2,color3,color4,[color5]" },
+    { "round",    "x" },
+    { "sec",      "x" }, { "sech",   "x" }, { "sign",   "x" },
+    { "sin",      "x" }, { "sinh",   "x" }, { "sqrt",   "x" },
+    { "tan",      "x" }, { "tanh",   "x" },
+};
+#define HINT_COUNT ((int)(sizeof(hint_table)/sizeof(hint_table[0])))
+
+static const char *find_hint(const char *name) {
+    for (int i = 0; i < HINT_COUNT; i++)
+        if (!strcmp(hint_table[i].name, name)) return hint_table[i].hint;
+    return NULL;
+}
+
 static int  ac_active     = 0;   // 1 while cycling through completions
 static int  ac_start      = 0;   // line_buf index where the prefix begins
 static char ac_prefix[16];       // original typed prefix
@@ -339,7 +365,7 @@ static void do_autocomplete(void) {
     ac_old_ins_len = ins_len;
 }
 
-static int settings_sel[5] = { 0, 0, 0, 0, 0 }; // [0]=number fmt, [1]=decimal, [2]=angle, [3]=graph type, [4]=input mode(0=STD,1=RPN)
+static int settings_sel[6] = { 0, 0, 0, 0, 0, 0 }; // [0]=number fmt, [1]=decimal, [2]=angle, [3]=graph type, [4]=input mode(0=STD,1=RPN), [5]=autocomplete(0=Full,1=Tab,2=None)
 
 // ── Expression evaluator ──────────────────────────────────────────────────────
 static double complex ans     = 0.0;  // last computed answer
@@ -827,20 +853,20 @@ static void enter_graph(void) {
 
 // ── Settings persistence (last flash sector) ──────────────────────────────────
 #define SETTINGS_FLASH_OFFSET (PICO_FLASH_SIZE_BYTES - FLASH_SECTOR_SIZE)
-#define SETTINGS_MAGIC        0x4F43534E   // bump version when struct changes
+#define SETTINGS_MAGIC        0x4F43534F   // bump version when struct changes
 
 typedef struct {
     uint32_t magic;
-    int      sel[5];
+    int      sel[6];
     char     name[CALC_NAME_MAX];
 } settings_data_t;
 
-static void settings_save(const int sel[5]) {
+static void settings_save(const int sel[6]) {
     uint8_t buf[FLASH_PAGE_SIZE];
     memset(buf, 0xff, sizeof(buf));
     settings_data_t *d = (settings_data_t *)buf;
     d->magic = SETTINGS_MAGIC;
-    memcpy(d->sel, sel, 5 * sizeof(int));
+    memcpy(d->sel, sel, 6 * sizeof(int));
     memcpy(d->name, calc_name, CALC_NAME_MAX);
     uint32_t ints = save_and_disable_interrupts();
     flash_range_erase(SETTINGS_FLASH_OFFSET, FLASH_SECTOR_SIZE);
@@ -848,11 +874,11 @@ static void settings_save(const int sel[5]) {
     restore_interrupts(ints);
 }
 
-static void settings_load(int sel[5]) {
+static void settings_load(int sel[6]) {
     const settings_data_t *d =
         (const settings_data_t *)(XIP_BASE + SETTINGS_FLASH_OFFSET);
     if (d->magic == SETTINGS_MAGIC) {
-        memcpy(sel, d->sel, 5 * sizeof(int));
+        memcpy(sel, d->sel, 6 * sizeof(int));
         memcpy(calc_name, d->name, CALC_NAME_MAX);
         calc_name[CALC_NAME_MAX - 1] = '\0';
     }
@@ -864,8 +890,9 @@ static const char * const srow1[] = { "Float","0","1","2","3","4","5","6","7","8
 static const char * const srow2[] = { "Radian", "Degree" };
 static const char * const srow3[] = { "Function", "Parametric", "Polar", "Seq" };
 static const char * const srow4[] = { "Standard", "Reverse Polish Notation" };
-static const char * const *settings_rows[] = { srow0, srow1, srow2, srow3, srow4 };
-static const int settings_row_count[] = { 3, 11, 2, 4, 2 };
+static const char * const srow5[] = { "Full Autocomplete", "Tab Completion", "None" };
+static const char * const *settings_rows[] = { srow0, srow1, srow2, srow3, srow4, srow5 };
+static const int settings_row_count[] = { 3, 11, 2, 4, 2, 3 };
 
 static int settings_row = 0;
 static int settings_col = 0;
@@ -925,7 +952,7 @@ static void settings_nav(int drow, int dcol) {
     settings_cursor_draw(0);
     if (drow != 0) {
         int nr = settings_row + drow;
-        if (nr < 0 || nr >= 5) { settings_cursor_draw(1); return; }
+        if (nr < 0 || nr >= 6) { settings_cursor_draw(1); return; }
         settings_row = nr;
         if (settings_col >= settings_row_count[settings_row])
             settings_col = settings_row_count[settings_row] - 1;
@@ -939,7 +966,7 @@ static void settings_nav(int drow, int dcol) {
 
 static void draw_settings_screen(void) {
     lcd_clear_content();
-    for (int r = 0; r < 5; r++)
+    for (int r = 0; r < 6; r++)
         for (int c = 0; c < settings_row_count[r]; c++)
             settings_draw_opt(r, c);
     lcd_set_bg_colour(BLACK);
@@ -1456,6 +1483,119 @@ static void input_newline(void) {
     cursor_pos = 0;
 }
 
+// ── Ghost text (inline autocomplete preview) ──────────────────────────────────
+static int ghost_len = 0;
+
+static void erase_ghost(void) {
+    if (ghost_len == 0) return;
+    // Restore actual line characters (not spaces) so we don't clobber e.g. ')'
+    line_goto(cursor_pos);
+    lcd_set_fg_colour(WHITE);
+    lcd_set_bg_colour(BLACK);
+    for (int i = 0; i < ghost_len; i++) {
+        int pos = cursor_pos + i;
+        char s[2] = { pos < line_len ? line_buf[pos] : ' ', '\0' };
+        lcd_print_string(s);
+    }
+    ghost_len = 0;
+    line_goto(cursor_pos);
+}
+
+static void draw_ghost(void) {
+    if (settings_sel[5] != 0) return;  // Full Autocomplete only
+    if (line_len == 0) return;
+
+    const char *text = NULL;
+    char ac_ghost[32];
+
+    // ── Parameter hint: cursor after '(' or ',' inside a known function ──
+    if (cursor_pos > 0 && (line_buf[cursor_pos - 1] == '(' || line_buf[cursor_pos - 1] == ',')) {
+        // Scan back to find the enclosing '(' at depth 0
+        int paren_pos = -1, depth = 0;
+        for (int i = cursor_pos - 1; i >= 0; i--) {
+            if (line_buf[i] == ')') depth++;
+            else if (line_buf[i] == '(') {
+                if (depth == 0) { paren_pos = i; break; }
+                depth--;
+            }
+        }
+        if (paren_pos >= 0) {
+            int end = paren_pos, start = end;
+            while (start > 0 && isalpha((unsigned char)line_buf[start - 1])) start--;
+            if (start < end) {
+                char fname[32];
+                int flen = end - start;
+                memcpy(fname, line_buf + start, flen);
+                fname[flen] = '\0';
+                const char *hint = find_hint(fname);
+                if (hint) {
+                    // Count commas at depth 0 between '(' and cursor to find param index
+                    int comma_count = 0, d = 0;
+                    for (int i = paren_pos + 1; i < cursor_pos; i++) {
+                        if (line_buf[i] == '(') d++;
+                        else if (line_buf[i] == ')') d--;
+                        else if (line_buf[i] == ',' && d == 0) comma_count++;
+                    }
+                    // Skip past that many comma-separated segments in the hint
+                    const char *h = hint;
+                    for (int i = 0; i < comma_count && h; i++) {
+                        h = strchr(h, ',');
+                        if (h) h++;
+                    }
+                    text = h;
+                }
+            }
+        }
+    }
+
+    // ── Autocomplete preview: not cycling ──
+    if (!text && !ac_active) {
+        int start = cursor_pos;
+        while (start > 0 && isalpha((unsigned char)line_buf[start - 1])) start--;
+        int plen = cursor_pos - start;
+        if (plen > 0) {
+            int found = -1;
+            for (int i = 0; i < AC_COUNT; i++) {
+                if (strncmp(ac_table[i].name, line_buf + start, plen) == 0
+                        && (int)strlen(ac_table[i].name) > plen) {
+                    found = i; break;
+                }
+            }
+            if (found >= 0) {
+                const char *match = ac_table[found].name;
+                int slen = (int)strlen(match) - plen;
+                memcpy(ac_ghost, match + plen, slen);
+                if (ac_table[found].has_parens) { ac_ghost[slen++] = '('; ac_ghost[slen++] = ')'; }
+                ac_ghost[slen] = '\0';
+                text = ac_ghost;
+            }
+        }
+    }
+
+    if (!text) return;
+
+    line_goto(cursor_pos);
+    lcd_set_fg_colour(GRAY);
+    lcd_set_bg_colour(BLACK);
+    lcd_print_string((char *)text);
+    ghost_len = (int)strlen(text);
+
+    // Re-draw any real line_buf chars displaced by ghost text (e.g. closing ')')
+    int tail = line_len - cursor_pos;
+    if (tail > 0) {
+        lcd_set_fg_colour(WHITE);
+        lcd_set_bg_colour(BLACK);
+        for (int i = 0; i < tail; i++) {
+            char s[2] = { line_buf[cursor_pos + i], '\0' };
+            lcd_print_string(s);
+        }
+        ghost_len += tail;
+    }
+
+    line_goto(cursor_pos);
+    lcd_set_fg_colour(WHITE);
+}
+
 // ── Block cursor helpers ───────────────────────────────────────────────────────
 // Returns the character currently under the text cursor.
 static char get_cursor_char(void) {
@@ -1525,14 +1665,21 @@ int main() {
              || screen_mode == SCREEN_CALCULATE|| screen_mode == SCREEN_3D) {
                 // no blink on these screens
             } else if (screen_mode != SCREEN_GRAPH) {
-                if (cursor_state) lcd_cursor_off();
-                else              cursor_on();
+                if (cursor_state) {
+                    lcd_cursor_off();
+                    if (screen_mode == SCREEN_HOME && ghost_len > 0)
+                        { ghost_len = 0; draw_ghost(); }
+                } else {
+                    cursor_on();
+                }
                 cursor_state ^= 1;
             }
             last_blink = time_us_64();
         }
 
         int c = read_i2c_kbd();
+        if (c != -1 && c != KEY_MOD_CHANGED && screen_mode == SCREEN_HOME)
+            erase_ghost();
         if (c == KEY_MOD_CHANGED) {
             uint8_t mod = read_modifier_state();
             static uint8_t last_mod = 0;
@@ -1613,6 +1760,7 @@ int main() {
                     else if (c == KEY_RIGHT) input_move_right();
                     else if (c == KEY_HOME)  input_home();
                     else                     input_end();
+                    draw_ghost();
                 } else if (screen_mode == SCREEN_EQUATIONS) {
                     if (c == KEY_LEFT) {
                         if (eq_cpos[eq_sel] > 0) { eq_cpos[eq_sel]--; eq_goto(eq_cpos[eq_sel]); }
@@ -1644,9 +1792,10 @@ int main() {
                 last_blink = time_us_64();
             }
         } else if (c == KEY_TAB) {
-            if (screen_mode == SCREEN_HOME) {
+            if (screen_mode == SCREEN_HOME && settings_sel[5] != 2) {
                 lcd_cursor_off();
                 do_autocomplete();
+                draw_ghost();
                 cursor_on();
                 cursor_state = 1;
                 last_blink = time_us_64();
@@ -1699,9 +1848,9 @@ int main() {
                         }
                     }
                 } else if (screen_mode == SCREEN_HOME) {
-                    if      (c == '\b')              { history_pos = -1; ac_active = 0; input_backspace(); }
+                    if      (c == '\b')              { history_pos = -1; ac_active = 0; input_backspace(); draw_ghost(); }
                     else if (c == '\r' || c == '\n') { ac_active = 0; input_newline(); }
-                    else                             { history_pos = -1; ac_active = 0; input_insert((char)c); }
+                    else                             { history_pos = -1; ac_active = 0; input_insert((char)c); draw_ghost(); }
                 } else if (screen_mode == SCREEN_EQUATIONS) {
                     if      (c == '\b') eq_backspace();
                     else if (c == '\r' || c == '\n') { /* enter: no-op for now */ }

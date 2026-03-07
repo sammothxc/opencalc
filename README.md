@@ -3,7 +3,8 @@
 
 ## Features
 - Command history
-- Command autocompletion
+- Command autocompletion and suggestion
+- Parameter hints
 
 ## Keybinds
 - <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Del</kbd> does a warm reboot, <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>F</kbd> boots into `BOOTSEL` mode
@@ -13,11 +14,10 @@
 - <kbd>Esc</kbd> navigates back to the home screen from anywhere
 
 ## TODO
-- command suggestions and parameter hints
-- command completion list
+- command completion list (4 items)
 - help function
 - resistor app
-- user manual app
+- user manual app, searchable
 - advanced graph/table/calculation tools
 - file management
 - part lookup
