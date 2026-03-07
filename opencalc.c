@@ -219,34 +219,35 @@ static void eq_insert_str(const char *s, int len) {
 typedef struct { const char *name; int has_parens; } ac_entry_t;
 static const ac_entry_t ac_table[] = {
     { "abs",   1 }, { "acos",  1 }, { "acosh", 1 }, { "acot",  1 }, { "acoth", 1 },
-    { "acsc",  1 }, { "acsch", 1 }, { "asec",  1 }, { "asech", 1 }, { "asin",  1 },
-    { "asinh", 1 }, { "atan",  1 }, { "atanh", 1 },
-    { "bat",   0 }, { "cbrt",  1 }, { "ceil",  1 }, { "cle",   0 }, { "cls",   0 },
+    { "acsc",  1 }, { "acsch", 1 }, { "and",   1 }, { "asec",  1 }, { "asech", 1 },
+    { "asin",  1 }, { "asinh", 1 }, { "atan",  1 }, { "atanh", 1 },
+    { "bat",   0 }, { "bin",   1 }, { "cbrt",  1 }, { "ceil",  1 }, { "cle",   0 }, { "cls",   0 },
     { "cos",   1 }, { "cosh",  1 }, { "cot",   1 }, { "coth",  1 }, { "csc",   1 },
-    { "csch",  1 }, { "exp",   1 }, { "floor", 1 }, { "ln",    1 }, { "log",   1 },
-    { "name",  1 }, { "neg",   0 }, { "resistor", 1 }, { "round", 1 }, { "sec",   1 }, { "sech",  1 },
-    { "sign",  1 }, { "sin",   1 }, { "sinh",  1 }, { "sqrt",  1 }, { "tan",   1 },
-    { "tanh",  1 }, { "ver",   0 },
+    { "csch",  1 }, { "exp",   1 }, { "floor", 1 }, { "hex",   1 }, { "ln",    1 }, { "log",   1 },
+    { "name",  1 }, { "neg",   0 }, { "not",   1 }, { "oct",   1 }, { "or",    1 },
+    { "resistor", 1 }, { "round", 1 }, { "sec",   1 }, { "sech",  1 },
+    { "shl",   1 }, { "shr",   1 }, { "sign",  1 }, { "sin",   1 }, { "sinh",  1 },
+    { "sqrt",  1 }, { "tan",   1 }, { "tanh",  1 }, { "ver",   0 }, { "xor",   1 },
 };
 #define AC_COUNT ((int)(sizeof(ac_table)/sizeof(ac_table[0])))
 
 typedef struct { const char *name; const char *hint; } hint_entry_t;
 static const hint_entry_t hint_table[] = {
-    { "abs",      "value" },
-    { "acos",     "value" }, { "acosh",  "value" }, { "acot",   "value" }, { "acoth",  "value" },
-    { "acsc",     "value" }, { "acsch",  "value" }, { "asec",   "value" }, { "asech",  "value" },
-    { "asin",     "value" }, { "asinh",  "value" }, { "atan",   "value" }, { "atanh",  "value" },
-    { "cbrt",     "value" }, { "ceil",   "value" },
-    { "cos",      "value" }, { "cosh",   "value" }, { "cot",    "value" },
-    { "coth",     "value" }, { "csc",    "value" }, { "csch",   "value" },
-    { "exp",      "value" }, { "floor",  "value" },
-    { "ln",       "value" }, { "log",    "value" },
-    { "name",     "label" },
-    { "resistor", "color1,color2,color3,color4,[color5]" },
-    { "round",    "value" },
-    { "sec",      "value" }, { "sech",   "value" }, { "sign",   "value" },
-    { "sin",      "value" }, { "sinh",   "value" }, { "sqrt",   "value" },
-    { "tan",      "value" }, { "tanh",   "value" },
+    { "abs",      "n" },
+    { "acos",     "n" }, { "acosh",  "n" }, { "acot",   "n" }, { "acoth",  "n" },
+    { "acsc",     "n" }, { "acsch",  "n" }, { "and",    "a,b" }, { "asec",   "n" }, { "asech",  "n" },
+    { "asin",     "n" }, { "asinh",  "n" }, { "atan",   "n" }, { "atanh",  "n" },
+    { "bin",      "n" }, { "cbrt",   "n" }, { "ceil",   "n" },
+    { "cos",      "n" }, { "cosh",   "n" }, { "cot",    "n" },
+    { "coth",     "n" }, { "csc",    "n" }, { "csch",   "n" },
+    { "exp",      "n" }, { "floor",  "n" }, { "hex",    "n" },
+    { "ln",       "n" }, { "log",    "n" },
+    { "name",     "label" }, { "not",    "n,[bits]" }, { "oct",    "n" }, { "or",     "a,b" },
+    { "resistor", "c1,c2,c3,c4,[c5]" },
+    { "round",    "n" },
+    { "sec",      "n" }, { "sech",   "n" }, { "shl",    "n,bits" }, { "shr",    "n,bits" },
+    { "sign",     "n" }, { "sin",    "n" }, { "sinh",   "n" }, { "sqrt",   "n" },
+    { "tan",      "n" }, { "tanh",   "n" }, { "xor",    "a,b" },
 };
 #define HINT_COUNT ((int)(sizeof(hint_table)/sizeof(hint_table[0])))
 
@@ -463,6 +464,41 @@ static double complex parse_primary(Parser *ps) {
         ps_skip(ps);
         if (*ps->p != '(') { ps->err = 1; return 0; }
         ps->p++;
+        // not(n) or not(n, bits) — bitwise NOT with optional bit width (default 32)
+        if (!strcmp(name, "not")) {
+            double complex a = parse_expr(ps);
+            ps_skip(ps);
+            int bits = 32;
+            if (*ps->p == ',') {
+                ps->p++;
+                double complex b = parse_expr(ps);
+                ps_skip(ps);
+                bits = (int)llround(creal(b));
+                if (bits < 1 || bits > 64) bits = 32;
+            }
+            if (*ps->p == ')') ps->p++; else ps->err = 1;
+            if (ps->err) return 0;
+            uint64_t mask = (bits == 64) ? ~0ULL : ((1ULL << bits) - 1);
+            return (double)((~(uint64_t)(uint32_t)(uint64_t)llround(creal(a))) & mask);
+        }
+        // Two-argument bitwise/shift functions
+        if (!strcmp(name, "and") || !strcmp(name, "or") || !strcmp(name, "xor") ||
+                !strcmp(name, "shl") || !strcmp(name, "shr")) {
+            double complex a = parse_expr(ps);
+            ps_skip(ps);
+            if (*ps->p == ',') ps->p++; else ps->err = 1;
+            double complex b = parse_expr(ps);
+            ps_skip(ps);
+            if (*ps->p == ')') ps->p++; else ps->err = 1;
+            if (ps->err) return 0;
+            int64_t ia = (int64_t)llround(creal(a));
+            int64_t ib = (int64_t)llround(creal(b));
+            if (!strcmp(name, "and")) return (double)(ia & ib);
+            if (!strcmp(name, "or"))  return (double)(ia | ib);
+            if (!strcmp(name, "xor")) return (double)(ia ^ ib);
+            if (!strcmp(name, "shl")) return (double)(ia << (ib & 63));
+            if (!strcmp(name, "shr")) return (double)((uint64_t)ia >> (ib & 63));
+        }
         double complex a = parse_expr(ps);
         ps_skip(ps);
         if (*ps->p == ')') ps->p++; else ps->err = 1;
@@ -506,7 +542,21 @@ static double complex parse_primary(Parser *ps) {
         if (!strcmp(name, "sign"))  return (creal(a) > 0) - (creal(a) < 0);
         ps->err = 1; return 0;
     }
-    // Numeric literal
+    // Numeric literal (with 0x hex and 0b binary prefix support)
+    if (ps->p[0] == '0' && (ps->p[1] == 'x' || ps->p[1] == 'X')) {
+        char *end;
+        long long v = strtoll(ps->p, &end, 16);
+        if (end == ps->p + 2) { ps->err = 1; return 0; }
+        ps->p = end;
+        return (double)v;
+    }
+    if (ps->p[0] == '0' && (ps->p[1] == 'b' || ps->p[1] == 'B')) {
+        ps->p += 2;
+        long long v = 0;
+        if (*ps->p != '0' && *ps->p != '1') { ps->err = 1; return 0; }
+        while (*ps->p == '0' || *ps->p == '1') v = v * 2 + (*ps->p++ - '0');
+        return (double)v;
+    }
     char *end;
     double v = strtod(ps->p, &end);
     if (end == ps->p) { ps->err = 1; return 0; }
@@ -1388,6 +1438,37 @@ static void exec_command(const char *cmd, int len) {
         draw_toolbar();
         print_ok("ok");
         return;
+    }
+
+    // bin/hex/oct display commands
+    {
+        int is_bin = (strncmp(buf, "bin(", 4) == 0 && buf[len-1] == ')');
+        int is_hex = (strncmp(buf, "hex(", 4) == 0 && buf[len-1] == ')');
+        int is_oct = (strncmp(buf, "oct(", 4) == 0 && buf[len-1] == ')');
+        if (is_bin || is_hex || is_oct) {
+            char inner[LINE_BUF_MAX];
+            int ilen = len - 5;
+            if (ilen < 0) ilen = 0;
+            memcpy(inner, buf + 4, ilen);
+            inner[ilen] = '\0';
+            double complex val = 0;
+            if (!eval_expr(inner, &val)) { print_err("?"); return; }
+            long long iv = (long long)llround(creal(val));
+            char out[80];
+            if (is_bin) {
+                // Build binary string with 0b prefix, minimum 1 digit
+                char tmp[66]; int ti = 65; tmp[ti] = '\0';
+                unsigned long long uv = (unsigned long long)iv;
+                do { tmp[--ti] = '0' + (uv & 1); uv >>= 1; } while (uv);
+                snprintf(out, sizeof(out), "0b%s  (%lld)", tmp + ti, iv);
+            } else if (is_hex) {
+                snprintf(out, sizeof(out), "0x%llX  (%lld)", (unsigned long long)iv, iv);
+            } else {
+                snprintf(out, sizeof(out), "0o%llo  (%lld)", (unsigned long long)iv, iv);
+            }
+            print_right(out);
+            return;
+        }
     }
 
     if (strncmp(buf, "resistor(", 9) == 0 && buf[len - 1] == ')') {

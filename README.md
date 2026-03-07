@@ -17,8 +17,6 @@
 - <kbd>Down</kbd> pulls down a list of alphabetically close commands to the one currently being typed
 
 ## TODO
-- multiline handling
-- more binary/hex/logic commands
 - help function (F10)
 - file management commands
 - advanced graph/table/calculation tools
