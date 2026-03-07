@@ -17,6 +17,7 @@
 - command completion list
 - help function
 - resistor app
+- user manual app
 - advanced graph/table/calculation tools
 - file management
 - part lookup
