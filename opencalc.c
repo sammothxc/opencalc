@@ -224,7 +224,7 @@ static const ac_entry_t ac_table[] = {
     { "bat",   0 }, { "cbrt",  1 }, { "ceil",  1 }, { "cle",   0 }, { "cls",   0 },
     { "cos",   1 }, { "cosh",  1 }, { "cot",   1 }, { "coth",  1 }, { "csc",   1 },
     { "csch",  1 }, { "exp",   1 }, { "floor", 1 }, { "ln",    1 }, { "log",   1 },
-    { "name",  1 }, { "neg",   0 }, { "round", 1 }, { "sec",   1 }, { "sech",  1 },
+    { "name",  1 }, { "neg",   0 }, { "resistor", 1 }, { "round", 1 }, { "sec",   1 }, { "sech",  1 },
     { "sign",  1 }, { "sin",   1 }, { "sinh",  1 }, { "sqrt",  1 }, { "tan",   1 },
     { "tanh",  1 }, { "ver",   0 },
 };
@@ -1209,6 +1209,78 @@ static int exec_rpn(const char *buf) {
     return 1;
 }
 
+static int resistor_digit(const char *s) {
+    if (!strcmp(s,"bla")||!strcmp(s,"blk")) return 0;
+    if (!strcmp(s,"bro"))                   return 1;
+    if (!strcmp(s,"red"))                   return 2;
+    if (!strcmp(s,"ora"))                   return 3;
+    if (!strcmp(s,"yel"))                   return 4;
+    if (!strcmp(s,"gre")||!strcmp(s,"grn")) return 5;
+    if (!strcmp(s,"blu"))                   return 6;
+    if (!strcmp(s,"vio")||!strcmp(s,"pur")) return 7;
+    if (!strcmp(s,"gry")||!strcmp(s,"gra")) return 8;
+    if (!strcmp(s,"whi"))                   return 9;
+    return -1;
+}
+
+static double resistor_mult(const char *s) {
+    int d = resistor_digit(s);
+    if (d >= 0) return pow(10.0, d);
+    if (!strcmp(s,"gol")) return 0.1;
+    if (!strcmp(s,"sil")) return 0.01;
+    return -1.0;
+}
+
+// Band index: -2=silver, -1=gold, 0-9=colour digit
+static unsigned int resistor_band_rgb(int d) {
+    if (d == -2) return LITEGRAY;
+    if (d == -1) return GOLD;
+    static const unsigned int c[10] = {
+        BLACK, BROWN, RED, ORANGE, YELLOW,
+        GREEN, BLUE, LILAC, GRAY, WHITE
+    };
+    return (d >= 0 && d <= 9) ? c[d] : BLACK;
+}
+
+static const char *resistor_color_name(int d) {
+    if (d == -2) return "sil";
+    if (d == -1) return "gol";
+    static const char *n[10] = {
+        "bla","bro","red","ora","yel","gre","blu","vio","gry","whi"
+    };
+    return (d >= 0 && d <= 9) ? n[d] : "?";
+}
+
+// Foreground colour that contrasts against the given band background
+static unsigned int resistor_band_fg(int d) {
+    // Light backgrounds: black text
+    if (d == 3 || d == 4 || d == 5 || d == 7 || d == 8 || d == 9 || d == -1 || d == -2)
+        return BLACK;
+    return WHITE; // dark backgrounds: black(0), brown(1), red(2), blue(6)
+}
+
+// Print bands as colour-highlighted names: [bro][,][bla][,]...  then newline
+static void print_resistor_coded(int *bands, int nb) {
+    int x, y;
+    lcd_get_xy(&x, &y);
+    int total = 4 * nb - 1; // 3 chars per name + 1 space between each
+    int rx = (ncols - total) * fw;
+    lcd_set_xy(rx < 0 ? 0 : rx, y);
+    for (int i = 0; i < nb; i++) {
+        if (i > 0) {
+            lcd_set_bg_colour(BLACK);
+            lcd_set_fg_colour(WHITE);
+            lcd_print_string(" ");
+        }
+        lcd_set_bg_colour(resistor_band_rgb(bands[i]));
+        lcd_set_fg_colour(resistor_band_fg(bands[i]));
+        lcd_print_string((char *)resistor_color_name(bands[i]));
+    }
+    lcd_set_bg_colour(BLACK);
+    lcd_set_fg_colour(WHITE);
+    lcd_putc(0, '\n');
+}
+
 static void exec_command(const char *cmd, int len) {
     while (len > 0 && cmd[len - 1] == ' ') len--;
     if (len == 0) return;
@@ -1254,6 +1326,88 @@ static void exec_command(const char *cmd, int len) {
         settings_save(settings_sel);
         draw_toolbar();
         print_ok("ok");
+        return;
+    }
+
+    if (strncmp(buf, "resistor(", 9) == 0 && buf[len - 1] == ')') {
+        // Parse comma-separated 3-letter color codes
+        char inner[64];
+        int ilen = len - 10; // skip "resistor(" and ")"
+        if (ilen < 0) ilen = 0;
+        memcpy(inner, buf + 9, ilen);
+        inner[ilen] = '\0';
+
+        // Numeric reverse lookup: resistor(10000) → colour bands
+        char *p0 = inner;
+        while (*p0 == ' ') p0++;
+        if (isdigit((unsigned char)*p0) || *p0 == '.') {
+            double val = atof(p0);
+            if (val <= 0 || !isfinite(val)) { print_err("bad value"); return; }
+
+            // 4-band decode
+            int exp4 = (int)floor(log10(val)) - 1;
+            if (exp4 < -2) exp4 = -2;
+            if (exp4 > 9)  exp4 = 9;
+            int sig4 = (int)round(val / pow(10.0, exp4));
+            if (sig4 >= 100 && exp4 < 9) { exp4++; sig4 = (int)round(val / pow(10.0, exp4)); }
+            if (sig4 < 10  && exp4 > -2) { exp4--; sig4 = (int)round(val / pow(10.0, exp4)); }
+            int d4[2] = { sig4 / 10, sig4 % 10 };
+
+            // 5-band decode
+            int exp5 = (int)floor(log10(val)) - 2;
+            if (exp5 < -2) exp5 = -2;
+            if (exp5 > 9)  exp5 = 9;
+            int sig5 = (int)round(val / pow(10.0, exp5));
+            if (sig5 >= 1000 && exp5 < 9) { exp5++; sig5 = (int)round(val / pow(10.0, exp5)); }
+            if (sig5 < 100  && exp5 > -2) { exp5--; sig5 = (int)round(val / pow(10.0, exp5)); }
+            int d5[3] = { sig5 / 100, (sig5 / 10) % 10, sig5 % 10 };
+
+            int bands4[4] = { d4[0], d4[1], exp4, -1 }; // -1 = gold tolerance
+            int bands5[5] = { d5[0], d5[1], d5[2], exp5, 1 }; // 1 = brown tolerance
+            print_resistor_coded(bands4, 4);
+            lcd_putc(0, '\n');
+            print_resistor_coded(bands5, 5);
+            return;
+        }
+
+        char bands[5][8];
+        int nb = 0;
+        char *p = inner;
+        while (*p && nb < 5) {
+            while (*p == ' ') p++;
+            int i = 0;
+            while (*p && *p != ',' && i < 7) {
+                if (*p != ' ') bands[nb][i++] = *p;
+                p++;
+            }
+            bands[nb][i] = '\0';
+            nb++;
+            if (*p == ',') p++;
+        }
+
+        if (nb < 4 || nb > 5) { print_err("4 or 5 bands"); return; }
+
+        double value;
+        if (nb == 4) {
+            int d0 = resistor_digit(bands[0]);
+            int d1 = resistor_digit(bands[1]);
+            double m = resistor_mult(bands[2]);
+            // bands[3] = tolerance, ignored
+            if (d0 < 0 || d1 < 0 || m < 0) { print_err("bad colour"); return; }
+            value = (d0 * 10 + d1) * m;
+        } else {
+            int d0 = resistor_digit(bands[0]);
+            int d1 = resistor_digit(bands[1]);
+            int d2 = resistor_digit(bands[2]);
+            double m = resistor_mult(bands[3]);
+            // bands[4] = tolerance, ignored
+            if (d0 < 0 || d1 < 0 || d2 < 0 || m < 0) { print_err("bad colour"); return; }
+            value = (d0 * 100 + d1 * 10 + d2) * m;
+        }
+
+        char out[32];
+        format_result(out, sizeof(out), value + 0*I);
+        print_right(out);
         return;
     }
 

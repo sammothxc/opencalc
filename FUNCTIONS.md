@@ -29,6 +29,7 @@
 | name() | Renames the PicoCalc | `name(MyCalc)` sets, `name()` clears | `ok` |
 | neg | RPN negation operator | `5 3 neg +` | `2` |
 | pi | Pi, 3.141592654 | `2pi` | `6.283185307` |
+| resistor() | Returns the value of a resistor, or the colors for a specific value | `resistor(bla,bla,red,bro)` or `resistor(10000)` | `10000` or colors |
 | round() | Rounds to the nearest integer | `round(4.6)` or `round(5.4)` | `5` |
 | sign() | Returns the sign | `sign(-4523)` or `sign(-1.1)` | `-1` |
 | sqrt() | Returns the square root | `sqrt(9)` | `3` |
