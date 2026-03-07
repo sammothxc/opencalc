@@ -51,7 +51,7 @@ static int  eq_cpos[EQ_COUNT];
 static int  eq_sel = 0;
 
 // ── Command history ────────────────────────────────────────────────────────────
-#define HISTORY_MAX 5
+#define HISTORY_MAX 15
 static char history[HISTORY_MAX][LINE_BUF_MAX];
 static int  history_count = 0;   // number of valid entries (0..HISTORY_MAX)
 static int  history_head  = 0;   // index of most-recently-added entry (ring)
@@ -232,21 +232,21 @@ static const ac_entry_t ac_table[] = {
 
 typedef struct { const char *name; const char *hint; } hint_entry_t;
 static const hint_entry_t hint_table[] = {
-    { "abs",      "x" },
-    { "acos",     "x" }, { "acosh",  "x" }, { "acot",   "x" }, { "acoth",  "x" },
-    { "acsc",     "x" }, { "acsch",  "x" }, { "asec",   "x" }, { "asech",  "x" },
-    { "asin",     "x" }, { "asinh",  "x" }, { "atan",   "x" }, { "atanh",  "x" },
-    { "cbrt",     "x" }, { "ceil",   "x" },
-    { "cos",      "x" }, { "cosh",   "x" }, { "cot",    "x" }, { "coth",   "x" },
-    { "csc",      "x" }, { "csch",   "x" },
-    { "exp",      "x" }, { "floor",  "x" },
-    { "ln",       "x" }, { "log",    "x" },
+    { "abs",      "value" },
+    { "acos",     "value" }, { "acosh",  "value" }, { "acot",   "value" }, { "acoth",  "value" },
+    { "acsc",     "value" }, { "acsch",  "value" }, { "asec",   "value" }, { "asech",  "value" },
+    { "asin",     "value" }, { "asinh",  "value" }, { "atan",   "value" }, { "atanh",  "value" },
+    { "cbrt",     "value" }, { "ceil",   "value" },
+    { "cos",      "value" }, { "cosh",   "value" }, { "cot",    "value" },
+    { "coth",     "value" }, { "csc",    "value" }, { "csch",   "value" },
+    { "exp",      "value" }, { "floor",  "value" },
+    { "ln",       "value" }, { "log",    "value" },
     { "name",     "label" },
     { "resistor", "color1,color2,color3,color4,[color5]" },
-    { "round",    "x" },
-    { "sec",      "x" }, { "sech",   "x" }, { "sign",   "x" },
-    { "sin",      "x" }, { "sinh",   "x" }, { "sqrt",   "x" },
-    { "tan",      "x" }, { "tanh",   "x" },
+    { "round",    "value" },
+    { "sec",      "value" }, { "sech",   "value" }, { "sign",   "value" },
+    { "sin",      "value" }, { "sinh",   "value" }, { "sqrt",   "value" },
+    { "tan",      "value" }, { "tanh",   "value" },
 };
 #define HINT_COUNT ((int)(sizeof(hint_table)/sizeof(hint_table[0])))
 
@@ -263,6 +263,31 @@ static int  ac_prefix_len = 0;
 static int  ac_idx        = 0;   // current match index in ac_table
 static int  ac_has_parens = 0;   // whether current insertion includes "()"
 static int  ac_old_ins_len = 0;  // length of the previously inserted completion text
+
+// ── Autocomplete dropdown state ────────────────────────────────────────────────
+#define DROPDOWN_MAX 4
+static int dropdown_active = 0;
+static int dropdown_sel    = 0;
+static int dropdown_count  = 0;
+static int dropdown_y      = 0;
+static int dropdown_x      = 0;
+static int dropdown_w      = 0;
+
+// Collect ac_table indices where name starts with the word ending at cursor_pos.
+static int ac_prefix_matches(int *out, int max_count) {
+    int start = cursor_pos;
+    while (start > 0 && isalpha((unsigned char)line_buf[start - 1])) start--;
+    int plen = cursor_pos - start;
+    if (plen == 0) return 0;
+    int count = 0;
+    for (int i = 0; i < AC_COUNT && count < max_count; i++) {
+        int nlen = (int)strlen(ac_table[i].name);
+        if (strncmp(ac_table[i].name, line_buf + start, plen) == 0
+                && (nlen > plen || (nlen == plen && ac_table[i].has_parens)))
+            out[count++] = i;
+    }
+    return count;
+}
 
 static void do_autocomplete(void) {
     char prefix[16];
@@ -299,12 +324,19 @@ static void do_autocomplete(void) {
         if (plen == 0 || plen >= (int)sizeof(prefix)) return;
         memcpy(prefix, &line_buf[pstart], plen);
         prefix[plen] = '\0';
+        // If dropdown is active, start search at the selected ac_table index.
+        // Must be captured before modifying the buffer (ac_prefix_matches reads line_buf).
+        if (dropdown_active) {
+            int tmp[DROPDOWN_MAX];
+            int total = ac_prefix_matches(tmp, DROPDOWN_MAX);
+            if (dropdown_sel < total)
+                search_from = tmp[dropdown_sel];
+        }
         // Remove the prefix from the buffer (it will be replaced by the completion).
         memmove(&line_buf[pstart], &line_buf[cursor_pos], line_len - cursor_pos);
         line_len   -= plen;
         cursor_pos  = pstart;
         line_buf[line_len] = '\0';
-        search_from    = 0;
         ac_old_ins_len = 0;
     }
 
@@ -314,7 +346,9 @@ static void do_autocomplete(void) {
         int s = (pass == 0) ? search_from : 0;
         int e = (pass == 0) ? AC_COUNT    : search_from;
         for (int i = s; i < e; i++) {
-            if (strncmp(ac_table[i].name, prefix, plen) == 0) {
+            int nlen = (int)strlen(ac_table[i].name);
+            if (strncmp(ac_table[i].name, prefix, plen) == 0
+                    && (nlen > plen || (nlen == plen && ac_table[i].has_parens))) {
                 found = i; break;
             }
         }
@@ -890,7 +924,7 @@ static const char * const srow1[] = { "Float","0","1","2","3","4","5","6","7","8
 static const char * const srow2[] = { "Radian", "Degree" };
 static const char * const srow3[] = { "Function", "Parametric", "Polar", "Seq" };
 static const char * const srow4[] = { "Standard", "Reverse Polish Notation" };
-static const char * const srow5[] = { "Full Autocomplete", "Tab Completion", "None" };
+static const char * const srow5[] = { "Full Autocomplete", "Tab Complete", "None" };
 static const char * const *settings_rows[] = { srow0, srow1, srow2, srow3, srow4, srow5 };
 static const int settings_row_count[] = { 3, 11, 2, 4, 2, 3 };
 
@@ -1502,8 +1536,8 @@ static void erase_ghost(void) {
 }
 
 static void draw_ghost(void) {
-    if (settings_sel[5] != 0) return;  // Full Autocomplete only
-    if (line_len == 0) return;
+    if (settings_sel[5] != 0) { line_goto(cursor_pos); return; }
+    if (line_len == 0) { line_goto(cursor_pos); return; }
 
     const char *text = NULL;
     char ac_ghost[32];
@@ -1550,32 +1584,45 @@ static void draw_ghost(void) {
 
     // ── Autocomplete preview: not cycling ──
     if (!text && !ac_active) {
-        int start = cursor_pos;
-        while (start > 0 && isalpha((unsigned char)line_buf[start - 1])) start--;
-        int plen = cursor_pos - start;
-        if (plen > 0) {
-            int found = -1;
-            for (int i = 0; i < AC_COUNT; i++) {
-                if (strncmp(ac_table[i].name, line_buf + start, plen) == 0
-                        && (int)strlen(ac_table[i].name) > plen) {
-                    found = i; break;
+        int matches[DROPDOWN_MAX];
+        int total = ac_prefix_matches(matches, DROPDOWN_MAX);
+        // When dropdown is open, ghost mirrors the selected item; else show first match
+        int found = -1;
+        if (total > 0) {
+            int sel = (dropdown_active && dropdown_sel < total) ? dropdown_sel : 0;
+            found = matches[sel];
+        }
+        if (found >= 0) {
+            int start = cursor_pos;
+            while (start > 0 && isalpha((unsigned char)line_buf[start - 1])) start--;
+            int plen = cursor_pos - start;
+            const char *match = ac_table[found].name;
+            int slen = (int)strlen(match) - plen;
+            memcpy(ac_ghost, match + plen, slen);
+            if (ac_table[found].has_parens) {
+                ac_ghost[slen++] = '(';
+                // Only show params inside parens when dropdown is selecting a command
+                if (dropdown_active) {
+                    const char *hint = find_hint(ac_table[found].name);
+                    if (hint) {
+                        int hlen = (int)strlen(hint);
+                        if (slen + hlen + 1 < (int)sizeof(ac_ghost)) {
+                            memcpy(ac_ghost + slen, hint, hlen);
+                            slen += hlen;
+                        }
+                    }
                 }
+                ac_ghost[slen++] = ')';
             }
-            if (found >= 0) {
-                const char *match = ac_table[found].name;
-                int slen = (int)strlen(match) - plen;
-                memcpy(ac_ghost, match + plen, slen);
-                if (ac_table[found].has_parens) { ac_ghost[slen++] = '('; ac_ghost[slen++] = ')'; }
-                ac_ghost[slen] = '\0';
-                text = ac_ghost;
-            }
+            ac_ghost[slen] = '\0';
+            text = ac_ghost;
         }
     }
 
     if (!text) return;
 
     line_goto(cursor_pos);
-    lcd_set_fg_colour(GRAY);
+    lcd_set_fg_colour(RGB(165, 165, 165));
     lcd_set_bg_colour(BLACK);
     lcd_print_string((char *)text);
     ghost_len = (int)strlen(text);
@@ -1594,6 +1641,91 @@ static void draw_ghost(void) {
 
     line_goto(cursor_pos);
     lcd_set_fg_colour(WHITE);
+}
+
+// ── Autocomplete dropdown ──────────────────────────────────────────────────────
+
+static void erase_dropdown(void) {
+    if (dropdown_count == 0) return;
+    lcd_fill_rect(dropdown_x, dropdown_y,
+                  dropdown_x + dropdown_w - 1,
+                  dropdown_y + dropdown_count * fh - 1, BLACK);
+    dropdown_count = 0;
+}
+
+static void draw_dropdown(void) {
+    // Collect all matches (shown as full list)
+    int matches[DROPDOWN_MAX];
+    int total = ac_prefix_matches(matches, DROPDOWN_MAX);
+
+    if (total == 0) {
+        dropdown_active = 0;
+        erase_dropdown();
+        return;
+    }
+
+    int count = total;
+
+    // Clamp selection to valid range
+    if (dropdown_sel >= count) dropdown_sel = count - 1;
+
+    // Word start x for alignment
+    int word_start = cursor_pos;
+    while (word_start > 0 && isalpha((unsigned char)line_buf[word_start - 1])) word_start--;
+    int abs_col  = (line_start_x / fw) + word_start;
+    int dd_x     = (abs_col % ncols) * fw;
+    int cur_abs  = (line_start_x / fw) + cursor_pos;
+    int cur_row  = cur_abs / ncols;
+    int dd_y     = line_start_y + (cur_row + 1) * fh;
+
+    // Width: widest label + 1 space padding
+    int max_label = 0;
+    for (int i = 0; i < count; i++) {
+        int idx = matches[i];
+        int w = (int)strlen(ac_table[idx].name) + (ac_table[idx].has_parens ? 2 : 0);
+        if (w > max_label) max_label = w;
+    }
+    max_label += 1;
+    int pix_w = max_label * fw;
+
+    // Erase any previously drawn rows that won't be overwritten
+    if (dropdown_count > count) {
+        lcd_fill_rect(dropdown_x, dropdown_y,
+                      dropdown_x + dropdown_w - 1,
+                      dropdown_y + dropdown_count * fh - 1, BLACK);
+    }
+
+    dropdown_x = dd_x;
+    dropdown_y = dd_y;
+    dropdown_w = pix_w;
+    dropdown_count = count;
+
+    for (int i = 0; i < count; i++) {
+        int idx = matches[i];
+        char label[24];
+        int llen = snprintf(label, sizeof(label), "%s%s",
+                            ac_table[idx].name,
+                            ac_table[idx].has_parens ? "()" : "");
+        while (llen < max_label) label[llen++] = ' ';
+        label[max_label] = '\0';
+        lcd_set_xy(dd_x, dd_y + i * fh);
+        if (i == dropdown_sel) {
+            lcd_set_bg_colour(WHITE);
+            lcd_set_fg_colour(BLACK);
+        } else {
+            lcd_set_bg_colour(GRAY);
+            lcd_set_fg_colour(BLACK);
+        }
+        lcd_print_string(label);
+    }
+    lcd_set_bg_colour(BLACK);
+    lcd_set_fg_colour(WHITE);
+}
+
+static void close_dropdown(void) {
+    if (!dropdown_active) return;
+    erase_dropdown();
+    dropdown_active = 0;
 }
 
 // ── Block cursor helpers ───────────────────────────────────────────────────────
@@ -1738,10 +1870,38 @@ int main() {
             } else {
                 lcd_cursor_off();
                 if (screen_mode == SCREEN_HOME) {
-                    ac_active = 0;
-                    history_navigate(c == KEY_UP ? 1 : -1);
-                }
-                else if (screen_mode == SCREEN_EQUATIONS)
+                    if (c == KEY_DOWN || (c == KEY_UP && dropdown_active)) {
+                        if (dropdown_active) {
+                            // Navigate within open dropdown
+                            int new_sel = dropdown_sel + (c == KEY_DOWN ? 1 : -1);
+                            if (new_sel < 0) {
+                                // UP past top: close dropdown, revert ghost to first match
+                                close_dropdown();
+                            } else if (new_sel >= dropdown_count) {
+                                // Wrap to top
+                                dropdown_sel = 0;
+                                draw_dropdown();
+                            } else {
+                                dropdown_sel = new_sel;
+                                draw_dropdown();
+                            }
+                        } else if (c == KEY_DOWN) {
+                            // Open dropdown if there are any matches
+                            int tmp[DROPDOWN_MAX];
+                            int total = ac_prefix_matches(tmp, DROPDOWN_MAX);
+                            if (total > 0) {
+                                dropdown_active = 1;
+                                dropdown_sel = 0;
+                                draw_dropdown();
+                            }
+                        }
+                        draw_ghost();
+                    } else {
+                        close_dropdown();
+                        ac_active = 0;
+                        history_navigate(c == KEY_UP ? 1 : -1);
+                    }
+                } else if (screen_mode == SCREEN_EQUATIONS)
                     eq_nav_vertical(c == KEY_UP ? -1 : 1);
                 cursor_on();
             }
@@ -1755,6 +1915,7 @@ int main() {
             } else {
                 lcd_cursor_off();
                 if (screen_mode == SCREEN_HOME) {
+                    close_dropdown();
                     ac_active = 0;
                     if      (c == KEY_LEFT)  input_move_left();
                     else if (c == KEY_RIGHT) input_move_right();
@@ -1785,7 +1946,11 @@ int main() {
         } else if (c == KEY_DEL) {
             if (screen_mode != SCREEN_SETTINGS) {
                 lcd_cursor_off();
-                if (screen_mode == SCREEN_HOME) { ac_active = 0; input_delete(); }
+                if (screen_mode == SCREEN_HOME) {
+                    close_dropdown();
+                    ac_active = 0;
+                    input_delete();
+                }
                 else if (screen_mode == SCREEN_EQUATIONS) eq_delete();
                 cursor_on();
                 cursor_state = 1;
@@ -1795,6 +1960,7 @@ int main() {
             if (screen_mode == SCREEN_HOME && settings_sel[5] != 2) {
                 lcd_cursor_off();
                 do_autocomplete();
+                close_dropdown();
                 draw_ghost();
                 cursor_on();
                 cursor_state = 1;
@@ -1819,6 +1985,7 @@ int main() {
                 if (c == 3 || c == 24) {
                     // Copy the whole current line/equation to clipboard
                     if (screen_mode == SCREEN_HOME) {
+                        close_dropdown();
                         ac_active = 0;
                         clipboard_len = line_len;
                         memcpy(clipboard, line_buf, line_len);
@@ -1848,9 +2015,28 @@ int main() {
                         }
                     }
                 } else if (screen_mode == SCREEN_HOME) {
-                    if      (c == '\b')              { history_pos = -1; ac_active = 0; input_backspace(); draw_ghost(); }
-                    else if (c == '\r' || c == '\n') { ac_active = 0; input_newline(); }
-                    else                             { history_pos = -1; ac_active = 0; input_insert((char)c); draw_ghost(); }
+                    if (c == '\b') {
+                        history_pos = -1; ac_active = 0;
+                        input_backspace();
+                        if (dropdown_active) { dropdown_sel = 0; draw_dropdown(); }
+                        draw_ghost();
+                    } else if (c == '\r' || c == '\n') {
+                        close_dropdown();
+                        ac_active = 0;
+                        input_newline();
+                    } else {
+                        history_pos = -1; ac_active = 0;
+                        input_insert((char)c);
+                        if (dropdown_active) {
+                            if (c == '(' || !isalpha((unsigned char)c))
+                                close_dropdown();
+                            else {
+                                dropdown_sel = 0;
+                                draw_dropdown();
+                            }
+                        }
+                        draw_ghost();
+                    }
                 } else if (screen_mode == SCREEN_EQUATIONS) {
                     if      (c == '\b') eq_backspace();
                     else if (c == '\r' || c == '\n') { /* enter: no-op for now */ }
