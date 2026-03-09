@@ -18,6 +18,7 @@
 
 ## TODO
 - help function (F10)
+- mathprint v classic
 - equation stuff (simplify, solve, factor)
 - file management
 - text editor
