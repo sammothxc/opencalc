@@ -221,20 +221,20 @@ static const ac_entry_t ac_table[] = {
     { "abs",   1 }, { "acos",  1 }, { "acosh", 1 }, { "acot",  1 }, { "acoth", 1 },
     { "acsc",  1 }, { "acsch", 1 }, { "and",   1 }, { "asec",  1 }, { "asech", 1 },
     { "asin",  1 }, { "asinh", 1 }, { "atan",  1 }, { "atanh", 1 },
-    { "bat",   0 }, { "bin",   1 }, { "cbrt",  1 }, { "ceil",  1 }, { "cle",   0 }, { "cls",   0 },
+    { "avg",   1 }, { "bat",   0 }, { "bin",   1 }, { "cbrt",  1 }, { "ceil",  1 }, { "cle",   0 }, { "cls",   0 },
     { "cos",   1 }, { "cosh",  1 }, { "cot",   1 }, { "coth",  1 }, { "csc",   1 },
     { "csch",  1 }, { "exp",   1 }, { "floor", 1 }, { "frac",  1 }, { "hex",   1 }, { "if",    1 }, { "input", 1 },
-    { "ln",    1 }, { "log",   1 },
+    { "ln",    1 }, { "log",   1 }, { "max",   1 }, { "min",   1 },
     { "name",  1 }, { "neg",   0 }, { "not",   1 }, { "oct",   1 }, { "or",    1 }, { "print", 1 },
     { "resistor", 1 }, { "round", 1 }, { "sec",   1 }, { "sech",  1 },
     { "shl",   1 }, { "shr",   1 }, { "sign",  1 }, { "sin",   1 }, { "sinh",  1 },
-    { "sqrt",  1 }, { "tan",   1 }, { "tanh",  1 }, { "ver",   0 }, { "xor",   1 },
+    { "sqrt",  1 }, { "sum",   1 }, { "tan",   1 }, { "tanh",  1 }, { "ver",   0 }, { "xor",   1 },
 };
 #define AC_COUNT ((int)(sizeof(ac_table)/sizeof(ac_table[0])))
 
 typedef struct { const char *name; const char *hint; } hint_entry_t;
 static const hint_entry_t hint_table[] = {
-    { "abs",      "n" },
+    { "abs",      "n" }, { "avg",    "n1,n2,..." },
     { "acos",     "n" }, { "acosh",  "n" }, { "acot",   "n" }, { "acoth",  "n" },
     { "acsc",     "n" }, { "acsch",  "n" }, { "and",    "a,b" }, { "asec",   "n" }, { "asech",  "n" },
     { "asin",     "n" }, { "asinh",  "n" }, { "atan",   "n" }, { "atanh",  "n" },
@@ -242,12 +242,12 @@ static const hint_entry_t hint_table[] = {
     { "cos",      "n" }, { "cosh",   "n" }, { "cot",    "n" },
     { "coth",     "n" }, { "csc",    "n" }, { "csch",   "n" },
     { "exp",      "n" }, { "floor",  "n" }, { "frac",   "n" }, { "hex",    "n" }, { "if",     "cond,then,else" }, { "input",  "var" },
-    { "ln",       "n" }, { "log",    "n" },
+    { "ln",       "n" }, { "log",    "n" }, { "max",    "n1,n2,..." }, { "min",    "n1,n2,..." },
     { "name",     "label" }, { "not",    "n,[bits]" }, { "oct",    "n" }, { "or",     "a,b" }, { "print",  "text" },
     { "resistor", "c1,c2,c3,c4,[c5]" },
     { "round",    "n" },
     { "sec",      "n" }, { "sech",   "n" }, { "shl",    "n,bits" }, { "shr",    "n,bits" },
-    { "sign",     "n" }, { "sin",    "n" }, { "sinh",   "n" }, { "sqrt",   "n" },
+    { "sign",     "n" }, { "sin",    "n" }, { "sinh",   "n" }, { "sqrt",   "n" }, { "sum",    "n1,n2,..." },
     { "tan",      "n" }, { "tanh",   "n" }, { "xor",    "a,b" },
 };
 #define HINT_COUNT ((int)(sizeof(hint_table)/sizeof(hint_table[0])))
@@ -480,6 +480,34 @@ static double complex parse_primary(Parser *ps) {
         if (*ps->p != '(') { ps->err = 1; return 0; }
         ps->p++;
         // if(cond, then, else) — lazy: only evaluates the taken branch
+        // Variadic: sum, min, max, avg
+        if (!strcmp(name, "sum") || !strcmp(name, "min") ||
+                !strcmp(name, "max") || !strcmp(name, "avg")) {
+            double complex total = 0;
+            double mn = 0, mx = 0;
+            int count = 0;
+            ps_skip(ps);
+            if (*ps->p == ')') { ps->p++; return 0; }  // empty → 0
+            while (!ps->err) {
+                double complex v = parse_comparison(ps);
+                if (ps->err) return 0;
+                double rv = creal(v);
+                if (count == 0) { mn = rv; mx = rv; }
+                else { if (rv < mn) mn = rv; if (rv > mx) mx = rv; }
+                total += v;
+                count++;
+                ps_skip(ps);
+                if (*ps->p == ',') { ps->p++; continue; }
+                break;
+            }
+            ps_skip(ps);
+            if (*ps->p == ')') ps->p++; else ps->err = 1;
+            if (ps->err) return 0;
+            if (!strcmp(name, "sum")) return total;
+            if (!strcmp(name, "min")) return mn;
+            if (!strcmp(name, "max")) return mx;
+            return total / count;  // avg
+        }
         if (!strcmp(name, "if")) {
             double complex cond = parse_comparison(ps);
             ps_skip(ps);
